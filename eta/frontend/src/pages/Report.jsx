@@ -17,6 +17,8 @@ export default function Report() {
   const [addingComment, setAddingComment] = useState(false)
   const [isFav, setIsFav] = useState(false)
   const [favLoading, setFavLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [fileTypeFilter, setFileTypeFilter] = useState('')
   const { warn, success, error: showError } = useToast()
 
   const toggleFav = useCallback(async () => {
@@ -207,6 +209,16 @@ export default function Report() {
     }
   }
 
+  // Filter scans by search query and file type
+  const filteredScans = scans.filter(scan => {
+    const matchesSearch = !searchQuery ||
+      (scan.filename && scan.filename.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (scan.sender && scan.sender.toLowerCase().includes(searchQuery.toLowerCase()))
+    const matchesFileType = !fileTypeFilter ||
+      (scan.filename && scan.filename.toLowerCase().endsWith(fileTypeFilter.toLowerCase()))
+    return matchesSearch && matchesFileType
+  })
+
   const getColor = (v) => ({ malicious: '#EF4444', suspicious: '#F59E0B', safe: '#10B981' }[v] || '#64748B')
 
   if (loading) {
@@ -222,6 +234,41 @@ export default function Report() {
       <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Reports</h1>
       <p style={{ color: '#64748B', fontSize: '0.9375rem', marginBottom: '2rem' }}>View and export detailed threat reports</p>
 
+      {/* Search and Filter Bar */}
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        {/* Search Input */}
+        <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+          <input
+            type="text"
+            placeholder="Search by filename or sender..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%', padding: '0.625rem 0.75rem 0.625rem 2.5rem',
+              borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
+              color: 'var(--text)', fontSize: '0.875rem',
+            }}
+          />
+          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#64748B', fontSize: '0.875rem' }}>🔍</span>
+        </div>
+
+        {/* File Type Filter */}
+        <select
+          value={fileTypeFilter}
+          onChange={(e) => setFileTypeFilter(e.target.value)}
+          style={{
+            padding: '0.625rem 0.75rem', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', minWidth: 120,
+          }}
+        >
+          <option value="">All Types</option>
+          <option value=".eml">.eml</option>
+          <option value=".txt">.txt</option>
+          <option value=".csv">.csv</option>
+          <option value=".msg">.msg</option>
+        </select>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem' }}>
         {/* Scan List Sidebar */}
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', height: 'fit-content' }}>
@@ -229,15 +276,26 @@ export default function Report() {
             <h2 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, margin: 0 }}>Scan History</h2>
           </div>
           <div style={{ maxHeight: 500, overflowY: 'auto' }}>
-            {scans.length === 0 ? (
+            {filteredScans.length === 0 ? (
               <div style={{ padding: '1.5rem', textAlign: 'center' }}>
-                <p style={{ color: '#64748B', fontSize: '0.875rem', marginBottom: '0.75rem' }}>No scans available</p>
-                <Link to="/analyze" style={{ color: '#06B6D4', textDecoration: 'none', fontSize: '0.8125rem' }}>
-                  Run an analysis first
-                </Link>
+                <p style={{ color: '#64748B', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
+                  {searchQuery || fileTypeFilter ? 'No matching scans' : 'No scans available'}
+                </p>
+                {(searchQuery || fileTypeFilter) ? (
+                  <button
+                    onClick={() => { setSearchQuery(''); setFileTypeFilter('') }}
+                    style={{ color: '#06B6D4', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8125rem' }}
+                  >
+                    Clear filters
+                  </button>
+                ) : (
+                  <Link to="/analyze" style={{ color: '#06B6D4', textDecoration: 'none', fontSize: '0.8125rem' }}>
+                    Run an analysis first
+                  </Link>
+                )}
               </div>
             ) : (
-              scans.map(scan => (
+              filteredScans.map(scan => (
                 <button
                   key={scan.scan_id}
                   onClick={() => handleSelectScan(scan)}

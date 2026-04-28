@@ -9,6 +9,20 @@ export default function SearchBar({ onClose }) {
   const [activeIdx, setActiveIdx] = useState(-1)
   const inputRef = useRef(null)
   const navigate = useNavigate()
+  const [recentSearches, setRecentSearches] = useState([])
+
+  // Load recent searches from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('recentSearches')
+    if (saved) setRecentSearches(JSON.parse(saved))
+  }, [])
+
+  const saveSearch = (q) => {
+    if (!q.trim()) return
+    const updated = [q, ...recentSearches.filter(s => s !== q)].slice(0, 5)
+    setRecentSearches(updated)
+    localStorage.setItem('recentSearches', JSON.stringify(updated))
+  }
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -57,6 +71,7 @@ export default function SearchBar({ onClose }) {
   }
 
   const handleSelect = (item) => {
+    saveSearch(query)
     onClose()
     if (item._type === 'scan') navigate(`/reports/${item.scan_id}`)
     if (item._type === 'user') navigate('/users')
@@ -105,6 +120,21 @@ export default function SearchBar({ onClose }) {
         </div>
 
         <div className="search-results">
+          {!query.trim() && recentSearches.length > 0 && (
+            <>
+              <div className="search-section-label">Recent Searches</div>
+              {recentSearches.map((s, i) => (
+                <div key={i} className="search-result-item" onClick={() => setQuery(s)} onMouseEnter={() => setActiveIdx(i)}>
+                  <div className="search-result-icon" style={{ background: 'var(--muted)', color: 'var(--sub)' }}>
+                    🕐
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500 }}>{s}</p>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
           {!query.trim() && (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--sub)', fontSize: '0.875rem' }}>
               Start typing to search across all your scans, reports and users

@@ -36,8 +36,8 @@ export default function Analytics() {
     go(getIOCStats(10), data => setIocData(data ?? { top_domains: [], top_ips: [], top_senders: [] }))
     go(getRiskDistribution(), data => setRiskData(data ?? { buckets: [], average: 0 }))
     go(getTimeAnalysis(), data => setTimeData(data ?? { hourly: [], daily: [] }))
-    // Fallback: never hang the page longer than 3s if stats fails
-    setTimeout(unblock, 3000)
+    // Fallback: unblock within 1.5 seconds if stats slow
+    setTimeout(unblock, 1500)
   }
 
   const getPercent = (val) => {

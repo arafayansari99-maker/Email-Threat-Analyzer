@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import api, { getStats, getHistory, getWidgetOrder, saveWidgetOrder, getScanTrends, getIOCStats } from '../services/api'
+import api, { getStats, getHistory, getWidgetOrder, saveWidgetOrder, getScanTrends, getIOCStats, cachedGet } from '../services/api'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area } from 'recharts'
 
 const WIDGET_REGISTRY = {
@@ -61,6 +61,8 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
+      setLoading(true)
+      // Load all data in parallel for faster response
       const [s, h, t, ioc] = await Promise.all([
         getStats(),
         getHistory(1, 10),
@@ -82,14 +84,15 @@ export default function Dashboard() {
   const getColor = (v) => ({ malicious: 'var(--red)', suspicious: 'var(--amber)', safe: 'var(--green)' }[v] || 'var(--sub)')
   const getBgColor = (v) => ({ malicious: 'rgba(239,68,68,0.15)', suspicious: 'rgba(245,158,11,0.15)', safe: 'rgba(16,185,129,0.15)' }[v] || 'rgba(100,116,139,0.15)')
 
-  const statCards = [
+  // Memoize expensive computations
+  const statCards = useMemo(() => [
     { label: 'Total Scans', value: stats?.total || 0, color: 'var(--cyan)' },
     { label: 'Malicious', value: stats?.malicious || 0, color: 'var(--red)' },
     { label: 'Suspicious', value: stats?.suspicious || 0, color: 'var(--amber)' },
     { label: 'Safe', value: stats?.safe || 0, color: 'var(--green)' },
-  ]
+  ], [stats?.total, stats?.malicious, stats?.suspicious, stats?.safe])
 
-  const features = [
+  const features = useMemo(() => [
     { to: '/analyze', label: 'Email Analyzer', desc: 'Upload and analyze email files for threats', color: 'var(--cyan)' },
     { to: '/history', label: 'Scan History', desc: 'View all your scanned emails and results', color: 'var(--purple)' },
     { to: '/analytics', label: 'Analytics', desc: 'Visualize threat statistics and trends', color: 'var(--pink)' },
@@ -98,7 +101,7 @@ export default function Dashboard() {
     { to: '/collaborate', label: 'Collaborate', desc: 'Workspaces, comments & team activity', color: 'var(--pink)' },
     { to: '/privacy', label: 'Privacy', desc: 'Manage your data and privacy settings', color: 'var(--sub)' },
     { to: '/settings', label: 'Settings', desc: 'Update profile and preferences', color: 'var(--sub)' },
-  ]
+  ], [])
 
   const threatNews = [
     {
@@ -167,8 +170,8 @@ export default function Dashboard() {
     setWidgetOrder(n)
   }
 
-  // Stats Component
-  const StatsWidget = () => (
+  // Stats Component - Memoized for performance
+  const StatsWidget = useMemo(() => () => (
     <div style={{ marginBottom: '2rem' }}>
       <h2 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--sub)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Overview</h2>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
@@ -177,6 +180,18 @@ export default function Dashboard() {
             <p style={{ fontSize: '0.75rem', color: 'var(--sub)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>{card.label}</p>
             <p style={{ fontSize: '2rem', fontWeight: 'bold', color: card.color }}>{card.value}</p>
           </div>
+        ))}
+      </div>
+    </div>
+  ), [statCards])
+
+  // Skeleton for Stats
+  const StatsSkeleton = () => (
+    <div style={{ marginBottom: '2rem' }}>
+      <div className="skeleton skeleton-title" style={{ width: '30%' }} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="skeleton skeleton-card" />
         ))}
       </div>
     </div>
@@ -582,14 +597,19 @@ export default function Dashboard() {
   return (
     <div style={{ padding: '1.5rem' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Dashboard</h1>
           <p style={{ color: 'var(--sub)', fontSize: '0.9375rem' }}>Welcome back, <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{user?.username}</span></p>
         </div>
-        <button onClick={() => setEditMode(!editMode)} style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--border)', background: editMode ? 'var(--cyan)' : 'var(--surface)', color: editMode ? '#fff' : 'var(--text)', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500 }}>
-          {editMode ? 'Done' : 'Customize'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <Link to="/analyze" style={{ padding: '0.625rem 1.25rem', borderRadius: 8, background: 'var(--cyan)', color: '#fff', textDecoration: 'none', fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span>+</span> Quick Scan
+          </Link>
+          <button onClick={() => setEditMode(!editMode)} style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--border)', background: editMode ? 'var(--cyan)' : 'var(--surface)', color: editMode ? '#fff' : 'var(--text)', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500 }}>
+            {editMode ? 'Done' : 'Customize'}
+          </button>
+        </div>
       </div>
 
       {/* Widget Reorder UI */}
@@ -615,7 +635,17 @@ export default function Dashboard() {
       )}
 
       {loading ? (
-        <div style={{ color: 'var(--sub)', textAlign: 'center', padding: '3rem' }}>Loading...</div>
+        <>
+          <StatsSkeleton />
+          <div style={{ marginBottom: '2rem' }}>
+            <div className="skeleton skeleton-title" style={{ width: '40%' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="skeleton skeleton-card" style={{ minHeight: '100px' }} />
+              ))}
+            </div>
+          </div>
+        </>
       ) : (
         // Render widgets in the order specified by widgetOrder
         <>{widgetOrder.map(wid => renderWidget(wid))}</>

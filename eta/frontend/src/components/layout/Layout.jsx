@@ -4,25 +4,25 @@ import { useAuth } from '../../hooks/useAuth'
 import { useTheme } from '../../hooks/useTheme'
 
 const NAV = [
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/history', label: 'Scan History' },
-  { to: '/reports', label: 'Reports' },
-  { to: '/analytics', label: 'Analytics' },
+  { to: '/dashboard', label: 'Dashboard', icon: '📊' },
+  { to: '/history', label: 'Scan History', icon: '📋' },
+  { to: '/reports', label: 'Reports', icon: '📄' },
+  { to: '/analytics', label: 'Analytics', icon: '📈' },
 ]
 
 const TOOLS_NAV = [
-  { to: '/analyze', label: 'Analyzer' },
-  { to: '/graph', label: 'IOC Graph' },
-  { to: '/collaborate', label: 'Collaborate' },
-  { to: '/news', label: 'Cyber News' },
-  { to: '/privacy', label: 'Privacy' },
-  { to: '/sessions', label: 'Security' },
-  { to: '/settings', label: 'Settings' },
+  { to: '/analyze', label: 'Analyzer', icon: '🔍' },
+  { to: '/graph', label: 'IOC Graph', icon: '🕸️' },
+  { to: '/collaborate', label: 'Collaborate', icon: '👥' },
+  { to: '/news', label: 'Cyber News', icon: '📰' },
+  { to: '/privacy', label: 'Privacy', icon: '🔒' },
+  { to: '/sessions', label: 'Security', icon: '🛡️' },
+  { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 
 const ADMIN_NAV = [
-  { to: '/users', label: 'User Management' },
-  { to: '/admin', label: 'Admin Panel' },
+  { to: '/users', label: 'User Management', icon: '👤' },
+  { to: '/admin', label: 'Admin Panel', icon: '⚡' },
 ]
 
 export default function Layout({ children }) {
@@ -35,6 +35,7 @@ export default function Layout({ children }) {
   // Mobile menu state
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // Check for mobile viewport
   useEffect(() => {
@@ -57,13 +58,16 @@ export default function Layout({ children }) {
   const cancelLogout = () => setShowLogoutConfirm(false)
   const initials = user?.username?.slice(0, 2).toUpperCase() || 'AN'
 
+  // Toggle sidebar collapse
+  const toggleSidebar = () => setSidebarCollapsed(!sidebarCollapsed)
+
   // Responsive sidebar styles
   const sidebarStyle = isMobile ? {
     position: 'fixed', inset: 0, width: '100%', height: '100vh',
     zIndex: 999, transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
     transition: 'transform 0.3s ease',
   } : {
-    width: 260, flexShrink: 0, borderRight: '1px solid var(--border)',
+    width: sidebarCollapsed ? 72 : 260, flexShrink: 0, borderRight: '1px solid var(--border)',
     background: 'var(--surface)', display: 'flex', flexDirection: 'column',
     position: 'sticky', top: 0, height: '100vh', overflow: 'hidden',
   }
@@ -81,7 +85,7 @@ export default function Layout({ children }) {
       {/* Sidebar */}
       <aside style={sidebarStyle}>
         {/* Logo */}
-        <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border)', position: 'relative' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <div style={{
               width: 40, height: 40, borderRadius: 12,
@@ -91,11 +95,24 @@ export default function Layout({ children }) {
             }}>
               <span style={{ color: 'var(--cyan)', fontSize: 20, fontWeight: 'bold' }}>E</span>
             </div>
-            <div>
-              <p style={{ fontSize: 15, fontWeight: 'bold', color: 'var(--text)', letterSpacing: '0.05em' }}>ETA</p>
-              <p style={{ fontSize: 10, color: 'var(--sub)', letterSpacing: '0.05em' }}>Email Threat Analyzer</p>
-            </div>
+            {!sidebarCollapsed && (
+              <div>
+                <p style={{ fontSize: 15, fontWeight: 'bold', color: 'var(--text)', letterSpacing: '0.05em' }}>ETA</p>
+                <p style={{ fontSize: 10, color: 'var(--sub)', letterSpacing: '0.05em' }}>Email Threat Analyzer</p>
+              </div>
+            )}
           </div>
+          {/* Sidebar Toggle Button (desktop only) */}
+          {!isMobile && (
+            <button
+              onClick={toggleSidebar}
+              className="sidebar-toggle"
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {sidebarCollapsed ? '→' : '←'}
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
@@ -106,16 +123,17 @@ export default function Layout({ children }) {
           {NAV.map(({ to, label, icon }) => (
             <NavLink key={to} to={to} end={to === '/dashboard'}
               style={({ isActive }) => ({
-                display: 'block',
-                padding: '0.75rem 0.75rem', borderRadius: 8, fontSize: 14,
+                display: sidebarCollapsed ? 'flex' : 'block',
+                padding: sidebarCollapsed ? '0.75rem' : '0.75rem 0.75rem', borderRadius: 8, fontSize: 14,
                 marginBottom: 4, fontWeight: 500,
                 background: isActive ? 'var(--cyan)' + '20' : 'transparent',
                 color: isActive ? 'var(--cyan)' : 'var(--text)',
                 border: isActive ? '1px solid var(--cyan)' + '40' : '1px solid transparent',
                 textDecoration: 'none', transition: 'all 0.15s ease',
+                justifyContent: 'center',
               })}
             >
-              {label}
+              {sidebarCollapsed ? (icon || label[0]) : label}
             </NavLink>
           ))}
 
@@ -125,16 +143,17 @@ export default function Layout({ children }) {
           {TOOLS_NAV.map(({ to, label, icon }) => (
             <NavLink key={to} to={to}
               style={({ isActive }) => ({
-                display: 'block',
-                padding: '0.75rem 0.75rem', borderRadius: 8, fontSize: 14,
+                display: sidebarCollapsed ? 'flex' : 'block',
+                padding: sidebarCollapsed ? '0.75rem' : '0.75rem 0.75rem', borderRadius: 8, fontSize: 14,
                 marginBottom: 4, fontWeight: 500,
                 background: isActive ? 'var(--cyan)' + '20' : 'transparent',
                 color: isActive ? 'var(--cyan)' : 'var(--text)',
                 border: isActive ? '1px solid var(--cyan)' + '40' : '1px solid transparent',
                 textDecoration: 'none', transition: 'all 0.15s ease',
+                justifyContent: 'center',
               })}
             >
-              {label}
+              {sidebarCollapsed ? (icon || label[0]) : label}
             </NavLink>
           ))}
 
@@ -146,16 +165,17 @@ export default function Layout({ children }) {
               {ADMIN_NAV.map(({ to, label }) => (
                 <NavLink key={to} to={to}
                   style={({ isActive }) => ({
-                    display: 'block',
-                    padding: '0.75rem 0.75rem', borderRadius: 8, fontSize: 14,
+                    display: sidebarCollapsed ? 'flex' : 'block',
+                    padding: sidebarCollapsed ? '0.75rem' : '0.75rem 0.75rem', borderRadius: 8, fontSize: 14,
                     marginBottom: 4, fontWeight: 500,
                     background: isActive ? 'var(--cyan)' + '20' : 'transparent',
                     color: isActive ? 'var(--cyan)' : 'var(--text)',
                     border: isActive ? '1px solid var(--cyan)' + '40' : '1px solid transparent',
                     textDecoration: 'none', transition: 'all 0.15s ease',
+                    justifyContent: 'center',
                   })}
                 >
-                  {label}
+                  {sidebarCollapsed ? label[0] : label}
                 </NavLink>
               ))}
             </>
@@ -164,30 +184,46 @@ export default function Layout({ children }) {
 
         {/* User section */}
         <div style={{ padding: '1rem', borderTop: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10,
-              background: 'rgba(6,182,212,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <span style={{ color: 'var(--cyan)', fontSize: 13, fontWeight: 'bold' }}>{initials}</span>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</p>
-              <p style={{ fontSize: 11, color: 'var(--sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</p>
-            </div>
-          </div>
-          <button onClick={handleLogout} style={{
-            width: '100%', padding: '0.75rem', borderRadius: 8,
-            background: 'rgba(239,68,68,0.1)', color: 'var(--red)', border: 'none',
-            cursor: 'pointer', fontSize: 13, fontWeight: 500,
-          }}>
-            Sign out
-          </button>
+          {sidebarCollapsed ? (
+            <button
+              onClick={handleLogout}
+              style={{
+                width: '100%', padding: '0.75rem', borderRadius: 8,
+                background: 'rgba(239,68,68,0.1)', color: 'var(--red)', border: 'none',
+                cursor: 'pointer', fontSize: 13, fontWeight: 500,
+              }}
+              title="Sign out"
+            >
+              ↪
+            </button>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: 'rgba(6,182,212,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span style={{ color: 'var(--cyan)', fontSize: 13, fontWeight: 'bold' }}>{initials}</span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</p>
+                  <p style={{ fontSize: 11, color: 'var(--sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</p>
+                </div>
+              </div>
+              <button onClick={handleLogout} style={{
+                width: '100%', padding: '0.75rem', borderRadius: 8,
+                background: 'rgba(239,68,68,0.1)', color: 'var(--red)', border: 'none',
+                cursor: 'pointer', fontSize: 13, fontWeight: 500,
+              }}>
+                Sign out
+              </button>
+            </>
+          )}
         </div>
       </aside>
 
       {/* Main content */}
-      <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: '100vh', background: 'var(--bg)' }}>
+      <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: '100vh', background: 'var(--bg)', paddingBottom: isMobile ? '4rem' : 0 }}>
         {/* Mobile header */}
         {isMobile && (
           <header style={{
@@ -212,6 +248,28 @@ export default function Layout({ children }) {
         )}
         {children}
       </main>
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <nav className="bottom-nav" aria-label="Main navigation">
+          <NavLink to="/dashboard" className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <span>📊</span>
+            <span>Home</span>
+          </NavLink>
+          <NavLink to="/analyze" className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <span>📧</span>
+            <span>Analyze</span>
+          </NavLink>
+          <NavLink to="/history" className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <span>📋</span>
+            <span>History</span>
+          </NavLink>
+          <NavLink to="/reports" className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}>
+            <span>📄</span>
+            <span>Reports</span>
+          </NavLink>
+        </nav>
+      )}
 
       {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (

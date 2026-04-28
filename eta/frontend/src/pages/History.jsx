@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { getHistory, deleteScan, getFavourites, addFavourite, removeFavourite, getReport } from '../services/api'
 
@@ -17,28 +17,42 @@ export default function History() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [verdictFilter, setVerdictFilter] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [fileTypeFilter, setFileTypeFilter] = useState('')
   const location = useLocation()
 
   // Reload scans when returning to this page
   useEffect(() => {
-    loadAll()
+    loadAll(false)
   }, [location.key])
 
-  const loadAll = async () => {
-    setLoading(true)
+  // Load more on page change (for infinite scroll)
+  useEffect(() => {
+    if (page > 1) {
+      loadAll(true)
+    }
+  }, [page])
+
+  // Load scan history data - handles both initial and pagination loads
+  const loadAll = async (append = false) => {
     try {
+      // Parallel fetch faster
       const [histRes, favRes] = await Promise.all([
-        getHistory(page, 50, verdictFilter || undefined),
+        getHistory(page, 50, verdictFilter || undefined).catch(() => ({ data: { records: [], pages: 1 } })),
         getFavourites().catch(() => ({ data: { favourites: [] } })),
       ])
-      setRecords(histRes.data?.records || histRes?.records || [])
+      if (append) {
+        setRecords(prev => [...prev, ...(histRes.data?.records || histRes?.records || [])])
+      } else {
+        setRecords(histRes.data?.records || histRes?.records || [])
+        setLoading(false)
+      }
       setTotalPages(histRes.data?.pages || 1)
       setFavourites(favRes.data?.favourites || [])
       const ids = new Set((favRes.data?.favourites || []).map(f => f.scan_id))
       setFavSet(ids)
     } catch (err) {
       console.error(err)
-    } finally {
       setLoading(false)
     }
   }
@@ -91,8 +105,17 @@ export default function History() {
         getReport(selectedForCompare[0]),
         getReport(selectedForCompare[1]),
       ])
-      setCompareData([r1.data, r2.data])
-    } catch { alert('Failed to load reports for comparison') }
+      // Handle both direct data and wrapped response
+      let data1 = r1.data || r1
+      let data2 = r2.data || r2
+      // Parse string responses if needed
+      if (typeof data1 === 'string') data1 = JSON.parse(data1)
+      if (typeof data2 === 'string') data2 = JSON.parse(data2)
+      setCompareData([data1, data2])
+    } catch (err) {
+      console.error('Compare error:', err)
+      alert('Failed to load reports for comparison')
+    }
     setCompareLoading(false)
   }
 
@@ -104,6 +127,28 @@ export default function History() {
 
   const displayRecords = tab === 'favourites' ? favourites : records
 
+  // Filter records by search query and file type
+  const filteredRecords = displayRecords.filter(r => {
+    const matchesSearch = !searchQuery ||
+      (r.filename && r.filename.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (r.sender && r.sender.toLowerCase().includes(searchQuery.toLowerCase()))
+    const matchesFileType = !fileTypeFilter ||
+      (r.filename && r.filename.toLowerCase().endsWith(fileTypeFilter.toLowerCase()))
+    return matchesSearch && matchesFileType
+  })
+
+  // Infinite scroll observer
+  const loadMoreRef = useCallback((node) => {
+    if (loading) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && page < totalPages) {
+        setPage(p => p + 1)
+      }
+    })
+    if (node) observer.observe(node)
+    return () => observer.disconnect()
+  }, [loading, page, totalPages])
+
   return (
     <div style={{ padding: '1.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
@@ -112,15 +157,20 @@ export default function History() {
           <p style={{ color: 'var(--sub)', fontSize: '0.875rem' }}>View and manage all your scanned emails</p>
         </div>
         {/* Compare button */}
-        <button onClick={() => { setCompareMode(true); runCompare() }} disabled={selectedForCompare.length !== 2}
-          style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--cyan)', background: 'transparent', color: 'var(--cyan)', cursor: selectedForCompare.length === 2 ? 'pointer' : 'not-allowed', fontSize: '0.8125rem', fontWeight: 600, opacity: selectedForCompare.length === 2 ? 1 : 0.5 }}>
-          ⚖️ Compare ({selectedForCompare.length}/2)
+        <button onClick={() => {
+            if (selectedForCompare.length === 2) {
+              setCompareMode(true)
+              runCompare()
+            }
+          }} disabled={selectedForCompare.length !== 2}
+          style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--cyan)', background: compareMode ? 'var(--cyan)' : 'transparent', color: compareMode ? '#fff' : 'var(--cyan)', cursor: selectedForCompare.length === 2 ? 'pointer' : 'not-allowed', fontSize: '0.8125rem', fontWeight: 600, opacity: selectedForCompare.length === 2 ? 1 : 0.5 }}>
+          {compareMode ? 'Comparing...' : `Compare (${selectedForCompare.length}/2)`}
         </button>
-              </div>
+      </div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0', marginBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
-        {[['all', 'All Scans', records.length], ['favourites', '⭐ Favourites', favourites.length]].map(([t, label, count]) => (
+        {[['all', 'All Scans', filteredRecords.length], ['favourites', 'Favourites', favourites.length]].map(([t, label, count]) => (
           <button key={t} onClick={() => setTab(t)}
             style={{
               padding: '0.625rem 1.25rem', border: 'none', borderBottom: `2px solid ${tab === t ? 'var(--cyan)' : 'transparent'}`,
@@ -133,14 +183,59 @@ export default function History() {
         ))}
       </div>
 
+      {/* Search and Filter Bar */}
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        {/* Search Input */}
+        <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+          <input
+            type="text"
+            placeholder="Search by filename or sender..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%', padding: '0.625rem 0.75rem 0.625rem 2.5rem',
+              borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
+              color: 'var(--text)', fontSize: '0.875rem',
+            }}
+          />
+          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--sub)', fontSize: '0.875rem' }}>🔍</span>
+        </div>
+
+        {/* File Type Filter */}
+        <select
+          value={fileTypeFilter}
+          onChange={(e) => setFileTypeFilter(e.target.value)}
+          style={{
+            padding: '0.625rem 0.75rem', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', minWidth: 120,
+          }}
+        >
+          <option value="">All Types</option>
+          <option value=".eml">.eml</option>
+          <option value=".txt">.txt</option>
+          <option value=".csv">.csv</option>
+          <option value=".msg">.msg</option>
+        </select>
+      </div>
+
       {loading ? (
-        <p style={{ color: 'var(--sub)' }}>Loading...</p>
-      ) : displayRecords.length === 0 ? (
-        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '3rem', textAlign: 'center' }}>
-          <p style={{ color: 'var(--sub)', marginBottom: '1.5rem' }}>
-            {tab === 'favourites' ? 'No favourite scans yet — star a report to bookmark it here' : 'No scans yet'}
+        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div className="skeleton skeleton-table-row" />
+          <div className="skeleton skeleton-table-row" />
+          <div className="skeleton skeleton-table-row" />
+          <div className="skeleton skeleton-table-row" />
+          <div className="skeleton skeleton-table-row" />
+        </div>
+      ) : filteredRecords.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">{tab === 'favourites' ? '⭐' : '📧'}</div>
+          <h3 className="empty-state-title">
+            {searchQuery || fileTypeFilter ? 'No matching scans' : tab === 'favourites' ? 'No favorite scans yet' : 'No scans yet'}
+          </h3>
+          <p className="empty-state-text">
+            {searchQuery || fileTypeFilter ? 'Try adjusting your search or filter' : tab === 'favourites' ? 'Star a report to bookmark it here' : 'Analyze your first email to get started'}
           </p>
-          {tab === 'all' && (
+          {tab === 'all' && !searchQuery && !fileTypeFilter && (
             <Link to="/analyze" style={{ padding: '0.75rem 1.5rem', background: 'var(--cyan)', color: 'var(--text)', borderRadius: 8, textDecoration: 'none', fontWeight: 600 }}>
               Start Analyzing
             </Link>
@@ -152,8 +247,8 @@ export default function History() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, width: 40 }}>⚖</th>
-                  <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>⭐</th>
+                  <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, width: 40 }}>Compare</th>
+                  <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, width: 52 }}>Fav</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>File Name</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Verdict</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Risk Score</th>
@@ -162,7 +257,7 @@ export default function History() {
                 </tr>
               </thead>
               <tbody>
-                {displayRecords.map(r => (
+                {filteredRecords.map(r => (
                   <tr key={r.scan_id} style={{ borderBottom: '1px solid var(--border)' }}>
                     {/* Compare checkbox */}
                     <td style={{ padding: '0.875rem', width: 40 }}>
@@ -224,7 +319,7 @@ export default function History() {
           }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
               <h2 style={{ color: 'var(--text)', fontSize: '1.25rem', fontWeight: 600 }}>Scan Comparison</h2>
-              <button onClick={closeCompare} style={{ background: 'none', border: 'none', color: 'var(--sub)', cursor: 'pointer', fontSize: '1.25rem' }}>✕</button>
+              <button onClick={closeCompare} style={{ background: 'none', border: 'none', color: 'var(--sub)', cursor: 'pointer', fontSize: '1.25rem' }}>X</button>
             </div>
 
             {compareLoading ? (
@@ -233,25 +328,37 @@ export default function History() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                 {[0, 1].map(idx => {
                   const d = compareData[idx]
-                  const rec = displayRecords.find(r => String(r.scan_id) === String(selectedForCompare[idx]))
+                  // More flexible matching - try both number and string
+                  const scanId = selectedForCompare[idx]
+                  const rec = filteredRecords.find(r =>
+                    Number(r.scan_id) === Number(scanId) ||
+                    String(r.scan_id) === String(scanId)
+                  )
                   const getColor = v => ({ malicious: 'var(--red)', suspicious: 'var(--amber)', safe: 'var(--green)' }[v] || 'var(--sub)')
                   return (
                     <div key={idx} style={{ background: 'var(--surface)', borderRadius: 12, padding: '1.25rem', border: '1px solid var(--border)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <div>
-                          <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>{rec?.filename || `Scan ${selectedForCompare[idx]}`}</h3>
-                          <p style={{ color: 'var(--sub)', fontSize: '0.75rem' }}>{new Date(rec?.created_at).toLocaleString()}</p>
+                          <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>
+                            {rec?.filename || d?.filename || `Scan ${selectedForCompare[idx]}`}
+                          </h3>
+                          <p style={{ color: 'var(--sub)', fontSize: '0.75rem' }}>
+                            {rec?.created_at ? new Date(rec.created_at).toLocaleString() : d?.created_at || 'Unknown date'}
+                          </p>
                         </div>
-                        <span style={{ padding: '0.25rem 0.625rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', background: getColor(d?.verdict) + '20', color: getColor(d?.verdict) }}>
-                          {d?.verdict || 'unknown'}
+                        {/* Use record verdict as fallback */}
+                        <span style={{ padding: '0.25rem 0.625rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', background: getColor(d?.verdict || rec?.verdict) + '20', color: getColor(d?.verdict || rec?.verdict) }}>
+                          {d?.verdict || rec?.verdict || 'unknown'}
                         </span>
                       </div>
 
-                      {/* Stats comparison */}
+                      {/* Stats comparison - use record as fallback */}
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.625rem', marginBottom: '1rem' }}>
                         <div style={{ background: 'var(--card)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
                           <p style={{ color: 'var(--sub)', fontSize: '0.625rem', textTransform: 'uppercase' }}>Risk Score</p>
-                          <p style={{ color: getColor(d?.verdict), fontSize: '1.25rem', fontWeight: 700 }}>{d?.risk_score ?? 0}</p>
+                          <p style={{ color: getColor(d?.verdict || rec?.verdict), fontSize: '1.25rem', fontWeight: 700 }}>
+                            {d?.risk_score ?? rec?.risk_score ?? 0}
+                          </p>
                         </div>
                         <div style={{ background: 'var(--card)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
                           <p style={{ color: 'var(--sub)', fontSize: '0.625rem', textTransform: 'uppercase' }}>URLs</p>

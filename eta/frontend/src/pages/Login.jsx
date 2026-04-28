@@ -11,6 +11,9 @@ export default function Login() {
   const [pendingToken, setPendingToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [emailFocused, setEmailFocused] = useState(false)
+  const [passwordFocused, setPasswordFocused] = useState(false)
   const navigate = useNavigate()
   const { syncUser } = useAuth()
 
@@ -214,29 +217,38 @@ export default function Login() {
             }}>
               Password
             </label>
-            <input
-              id="login-password"
-              name="password"
-              type="password"
-              placeholder="Enter password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={showTotp}
-              autoComplete="current-password"
-              style={{
-                width: '100%',
-                padding: '0.875rem',
-                borderRadius: '8px',
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                fontSize: '1rem',
-                opacity: showTotp ? 0.5 : 1,
-                WebkitTextSecurity: 'disc',
-                textSecurity: 'disc',
-              }}
-            />
+            <div className="password-toggle">
+              <input
+                id="login-password"
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={showTotp}
+                autoComplete="current-password"
+                style={{
+                  width: '100%',
+                  padding: '0.875rem',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  fontSize: '1rem',
+                  opacity: showTotp ? 0.5 : 1,
+                }}
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
+              >
+                {showPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
           </div>
 
           {showTotp && (

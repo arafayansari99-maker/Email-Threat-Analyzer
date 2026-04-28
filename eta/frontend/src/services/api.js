@@ -3,18 +3,37 @@ import axios from 'axios'
 // Use proxy in dev (empty = Vite handles routing), full URL when VITE_API_URL is set (production)
 const BASE = import.meta.env.VITE_API_URL || ''
 
+// Simple in-memory cache for API responses
+const cache = new Map()
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+// Request timeout - responsive within 2 seconds
+const API_TIMEOUT = 2000 // ms - fast but reliable
+
+// Clear expired cache entries periodically
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, value] of cache.entries()) {
+    if (now - value.timestamp > CACHE_DURATION) {
+      cache.delete(key)
+    }
+  }
+}, 60000) // Check every minute
+
 const api = axios.create({
   baseURL: BASE,
-  timeout: 180000,
+  timeout: API_TIMEOUT, // Stricter timeout for faster response
   // Don't set Content-Type for FormData - browser sets it with boundary
 })
 
+// Request interceptor
 api.interceptors.request.use(cfg => {
   const t = localStorage.getItem('eta_token')
   if (t) cfg.headers.Authorization = `Bearer ${t}`
   return cfg
 })
 
+// Response interceptor with cache
 api.interceptors.response.use(
   r => r,
   err => {
@@ -28,6 +47,32 @@ api.interceptors.response.use(
     return Promise.reject(err)
   }
 )
+
+// Cached GET request
+export const cachedGet = async (url, options = {}) => {
+  const { cacheKey, ttl = CACHE_DURATION, ...params } = options
+  const key = cacheKey || url + JSON.stringify(params)
+
+  const cached = cache.get(key)
+  if (cached && Date.now() - cached.timestamp < ttl) {
+    return cached.data
+  }
+
+  const response = await api.get(url, { params })
+  cache.set(key, { data: response.data, timestamp: Date.now() })
+  return response.data
+}
+
+// Clear specific cache
+export const clearCache = (pattern) => {
+  if (pattern) {
+    for (const key of cache.keys()) {
+      if (key.includes(pattern)) cache.delete(key)
+    }
+  } else {
+    cache.clear()
+  }
+}
 
 export const analyzeEmail = (files, onProgress, isBatch = false) => {
   const fd = new FormData()
