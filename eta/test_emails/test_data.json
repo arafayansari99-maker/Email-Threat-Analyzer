@@ -1,0 +1,31 @@
+{
+  "users": [
+    {
+      "name": "John Doe",
+      "email": "john@example.com",
+      "status": "active",
+      "last_login": "2024-01-15",
+      "messages": [
+        "Welcome to our service",
+        "Your account has been verified",
+        "Please update your password"
+      ]
+    },
+    {
+      "name": "Jane Smith",
+      "email": "jane@phishing.xyz",
+      "status": "suspended",
+      "alert": "Account verification required",
+      "urgent_actions": [
+        "Click here to verify",
+        "Update payment information",
+        "Confirm identity immediately"
+      ]
+    }
+  ],
+  "system_messages": {
+    "warning": "Security breach detected - verify accounts now",
+    "notification": "New login from unknown device",
+    "alert": "Suspicious activity on your account"
+  }
+}

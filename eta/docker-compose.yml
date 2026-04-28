@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  # ── Backend FastAPI ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./eta.db
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - APP_ENV=production
+    volumes:
+      - ./backend:/app
+      - backend_data:/app/ml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/admin/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Frontend Vite dev server (with hot reload) ─────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/package.json:/app/package.json
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── Optional: Nginx reverse proxy for production build ─────────────────────
+  # Uncomment frontend-prod and comment out frontend above for production
+  # frontend-prod:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "80:80"
+  #   environment:
+  #     - VITE_API_URL=http://backend:8000
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
+
+volumes:
+  backend_data:

@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "max_features": 5000,
+  "ngram_range": [
+    1,
+    2
+  ],
+  "metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "confusion_matrix": {
+      "true_negative": 1000,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_positive": 1000
+    },
+    "cv_accuracy_mean": 1.0,
+    "cv_accuracy_std": 0.0
+  }
+}

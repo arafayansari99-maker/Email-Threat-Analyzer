@@ -1,0 +1,14 @@
+From: "PayPal Support" <service@paypall-secure.xyz>
+To: customer@example.com
+Reply-To: account-update@paypal-login.xyz
+Subject: Action Required: Your PayPal Account is Limited
+Date: Tue, 07 Apr 2026 13:00:00 -0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+We have detected suspicious activity on your PayPal account and have limited access until you verify your information.
+Please sign in and confirm your payment method, password, and account details immediately.
+Click here: https://paypal-login.xyz/confirm
+
+Thank you,
+PayPal Security Team

@@ -1,0 +1,13 @@
+From: "Amazon" <order-update@amazon.com>
+To: user@example.com
+Subject: Your order has shipped
+Date: Tue, 07 Apr 2026 13:00:00 -0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hello,
+
+Your order #123-4567890 has shipped and is on its way.
+Track your delivery in your Amazon account at https://www.amazon.com/
+
+Thank you for shopping with Amazon.

@@ -1,0 +1,51 @@
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+eta_pdf_errors.log
+
+# Environment
+.env
+.env.local
+
+# Vite cache
+.vite/
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Pytest
+.pytest_cache/

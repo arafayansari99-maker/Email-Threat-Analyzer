@@ -1,0 +1,17 @@
+From: "Bank Security" <alerts@securebank.xyz>
+To: victim@example.com
+Reply-To: support@verify-secure.xyz
+Subject: URGENT: Verify Your Bank Account Now
+Date: Tue, 07 Apr 2026 13:00:00 -0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Dear customer,
+
+We detected unauthorized access to your bank account and your login credentials must be verified immediately.
+Your account will be suspended unless you verify your password, account number, and payment method.
+Click here: http://198.51.100.45/verify-account
+Please verify now to avoid permanent suspension.
+
+Sincerely,
+Bank Security Team
