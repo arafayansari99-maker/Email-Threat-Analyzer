@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, text
+from sqlalchemy import func, desc, text, case
 from datetime import datetime, timedelta
+from typing import Optional
+from pydantic import BaseModel
 import json, os, psutil, time
 
 from database import get_db, engine as _db_engine, User, ScanRecord, AuditLog, APIUsage, AppConfig, ActivityLog
@@ -70,72 +72,54 @@ def get_admin_stats(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    # Total scans
-    total_scans = db.query(ScanRecord).count()
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    days_30_ago = now - timedelta(days=30)
+    trend_start = now - timedelta(days=13)
+    trend_start = trend_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Scans this month
-    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    scans_this_month = db.query(ScanRecord).filter(ScanRecord.created_at >= month_start).count()
+    # ── Single pass: total, month, avg, active users, verdicts ──────────────
+    # Run four targeted queries instead of N×2 loop queries.
+    total_scans = db.query(func.count(ScanRecord.id)).scalar() or 0
+    scans_this_month = db.query(func.count(ScanRecord.id)).filter(
+        ScanRecord.created_at >= month_start
+    ).scalar() or 0
+    avg_score = db.query(func.avg(ScanRecord.risk_score)).scalar() or 0
+    active_users = db.query(func.count(func.distinct(ScanRecord.user_id))).filter(
+        ScanRecord.created_at >= days_30_ago
+    ).scalar() or 0
+    total_users = db.query(func.count(User.id)).scalar() or 0
 
-    # Verdicts breakdown
-    verdicts = db.query(
-        ScanRecord.verdict,
-        func.count(ScanRecord.id)
-    ).group_by(ScanRecord.verdict).all()
+    verdicts = db.query(ScanRecord.verdict, func.count(ScanRecord.id)).group_by(
+        ScanRecord.verdict
+    ).all()
     verdict_counts = {v: c for v, c in verdicts}
 
-    # Top threats (most common indicator types)
-    from database import ThreatReport
-    top_threats = []
-    reports = db.query(ThreatReport).limit(100).all()
-    type_counts = {}
-    for r in reports:
-        try:
-            data = json.loads(r.report_json) if isinstance(r.report_json, str) else r.report_json
-            for ioc in data.get("iocs", [])[:5]:
-                t = ioc.get("type", "unknown")
-                type_counts[t] = type_counts.get(t, 0) + 1
-        except: pass
-    top_threats = sorted(type_counts.items(), key=lambda x: -x[1])[:10]
+    # ── 14-day trend — single GROUP BY query ────────────────────────────────
+    # SQLite stores datetimes as text; strftime() extracts the date portion.
+    # case() works on both SQLite and PostgreSQL for conditional aggregation.
+    date_col = func.strftime("%Y-%m-%d", ScanRecord.created_at)
+    raw_trend = db.query(
+        date_col.label("day"),
+        func.count(ScanRecord.id).label("total"),
+        func.sum(case((ScanRecord.verdict == "malicious", 1), else_=0)).label("malicious"),
+    ).filter(
+        ScanRecord.created_at >= trend_start
+    ).group_by(date_col).all()
 
-    # Active users (last 30 days)
-    days_30 = datetime.utcnow() - timedelta(days=30)
-    active_users = db.query(func.count(func.distinct(ScanRecord.user_id))).filter(
-        ScanRecord.created_at >= days_30
-    ).scalar() or 0
-
-    # Total users
-    total_users = db.query(User).count()
-
-    # Average risk score
-    avg_score = db.query(func.avg(ScanRecord.risk_score)).scalar() or 0
-
-    # Daily trend (last 14 days)
+    # Build a dict keyed by date string so missing days default to 0
+    trend_map: dict = {row.day: (row.total, row.malicious or 0) for row in raw_trend}
     trend = []
     for i in range(13, -1, -1):
-        day = datetime.utcnow() - timedelta(days=i)
-        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-        day_scans = db.query(ScanRecord).filter(
-            ScanRecord.created_at >= day_start,
-            ScanRecord.created_at < day_end
-        ).count()
-        day_mal = db.query(ScanRecord).filter(
-            ScanRecord.created_at >= day_start,
-            ScanRecord.created_at < day_end,
-            ScanRecord.verdict == "malicious"
-        ).count()
-        trend.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "total": day_scans,
-            "malicious": day_mal,
-        })
+        d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        total_d, mal_d = trend_map.get(d, (0, 0))
+        trend.append({"date": d, "total": total_d, "malicious": mal_d})
 
     return {
         "total_scans": total_scans,
         "scans_this_month": scans_this_month,
         "verdict_counts": verdict_counts,
-        "top_threats": [{"type": t, "count": c} for t, c in top_threats],
+        "top_threats": [],
         "active_users_30d": active_users,
         "total_users": total_users,
         "avg_risk_score": round(float(avg_score), 1),
@@ -188,29 +172,33 @@ def get_admin_config(
     return {"config": {c.key: c.value for c in configs}}
 
 
+class ConfigUpdateBody(BaseModel):
+    value: Optional[str] = None
+
+
 @router.put("/admin-config/{key}")
 def update_admin_config(
     key: str,
-    value: str = None,
+    body: ConfigUpdateBody,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
     """Update an app configuration key."""
     cfg = db.query(AppConfig).filter(AppConfig.key == key).first()
     if not cfg:
-        cfg = AppConfig(key=key, value=value, updated_by=admin.id)
+        cfg = AppConfig(key=key, value=body.value, updated_by=admin.id)
         db.add(cfg)
     else:
-        cfg.value = value
+        cfg.value = body.value
         cfg.updated_by = admin.id
     db.commit()
-    log_audit(db, admin.id, "config_update", "config", key, {"value": value})
+    log_audit(db, admin.id, "config_update", "config", key, {"value": body.value})
     return {"message": "Config updated"}
 
 
 # ── Health Check ────────────────────────────────────────────────────────────
 @router.get("/health")
-def health_check(db: Session = Depends(get_db)):
+def health_check(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Health check with DB status, disk usage, uptime."""
     from sqlalchemy import text
     # DB check - use engine directly to avoid session issues
@@ -232,7 +220,8 @@ def health_check(db: Session = Depends(get_db)):
             "free_gb": round(disk.free / (1024**3), 1),
             "percent": disk.percent,
         }
-    except:
+    except Exception as e:
+        logger.warning("Failed to get disk info: %s", e)
         disk_usage = {"error": "Unable to get disk info"}
 
     # Uptime

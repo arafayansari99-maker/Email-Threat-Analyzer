@@ -5,7 +5,7 @@ from sqlalchemy import func, case
 from typing import Optional
 
 from database import get_db, ScanRecord, ThreatReport, User, Favourite, AuditLog
-from routers.auth import optional_user, get_current_user
+from routers.auth import get_current_user
 
 router = APIRouter(prefix="/history", tags=["history"])
 
@@ -15,14 +15,20 @@ def scan_history(
     page:    int = Query(1, ge=1),
     limit:   int = Query(20, ge=1, le=100),
     verdict: Optional[str] = Query(None),
+    search:  Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(optional_user),
+    current_user: User = Depends(get_current_user),
 ):
-    q = db.query(ScanRecord).order_by(ScanRecord.created_at.desc())
-    if current_user:
-        q = q.filter((ScanRecord.user_id == current_user.id) | (ScanRecord.user_id == None))
+    q = db.query(ScanRecord).filter(ScanRecord.user_id == current_user.id).order_by(ScanRecord.created_at.desc())
     if verdict in ("safe","suspicious","malicious"):
         q = q.filter(ScanRecord.verdict == verdict)
+    if search:
+        term = f"%{search}%"
+        q = q.filter(
+            ScanRecord.filename.ilike(term) |
+            ScanRecord.sender.ilike(term) |
+            ScanRecord.subject.ilike(term)
+        )
 
     total = q.count()
     recs  = q.offset((page-1)*limit).limit(limit).all()
@@ -61,15 +67,14 @@ def delete_scan(
 
 
 @router.get("/stats")
-def get_stats(db: Session = Depends(get_db)):
-    # Single query instead of 5 separate count/avg queries
+def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     row = db.query(
         func.count(ScanRecord.id).label("total"),
         func.sum(case((ScanRecord.verdict == "malicious", 1), else_=0)).label("malicious"),
         func.sum(case((ScanRecord.verdict == "suspicious", 1), else_=0)).label("suspicious"),
         func.sum(case((ScanRecord.verdict == "safe", 1), else_=0)).label("safe"),
         func.avg(ScanRecord.risk_score).label("avg_score"),
-    ).one()
+    ).filter(ScanRecord.user_id == current_user.id).one()
 
     total  = row.total or 0
     mal    = int(row.malicious or 0)
@@ -77,7 +82,13 @@ def get_stats(db: Session = Depends(get_db)):
     safe   = int(row.safe or 0)
     avg_sc = row.avg_score or 0
 
-    recent = db.query(ScanRecord).order_by(ScanRecord.created_at.desc()).limit(20).all()
+    recent = (
+        db.query(ScanRecord)
+        .filter(ScanRecord.user_id == current_user.id)
+        .order_by(ScanRecord.created_at.desc())
+        .limit(20)
+        .all()
+    )
     trend  = [{"date": r.created_at.strftime("%m/%d"), "score": round(r.risk_score, 1), "verdict": r.verdict}
               for r in reversed(recent)]
 
@@ -91,17 +102,18 @@ def get_stats(db: Session = Depends(get_db)):
 
 def _fmt(r: ScanRecord) -> dict:
     return {
-        "scan_id":    r.scan_id,
-        "filename":   r.filename,
-        "sender":     r.sender,
-        "subject":    r.subject,
-        "risk_score": round(r.risk_score, 1),
-        "verdict":    r.verdict,
-        "url_count":  r.url_count,
+        "scan_id":      r.scan_id,
+        "filename":     r.filename,
+        "sender":       r.sender,
+        "subject":      r.subject,
+        "risk_score":   round(r.risk_score, 1),
+        "verdict":      r.verdict,
+        "phishing_prob": round(r.phishing_prob or 0, 4),
+        "url_count":    r.url_count,
         "attach_count": r.attach_count,
-        "source":     r.source,
-        "duration":   r.duration_s,
-        "created_at": r.created_at.isoformat(),
+        "source":       r.source,
+        "duration":     r.duration_s,
+        "created_at":   r.created_at.isoformat(),
     }
 
 

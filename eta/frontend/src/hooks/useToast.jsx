@@ -36,10 +36,10 @@ export function ToastProvider({ children }) {
 export const useToast = () => useContext(ToastContext)
 
 const TOAST_ICONS = {
-  success: '✅',
-  error:   '❌',
-  warning: '⚠️',
-  info:    'ℹ️',
+  success: '✓',
+  error:   '✕',
+  warning: '!',
+  info:    'i',
 }
 
 function ToastContainer({ toasts, onDismiss }) {
@@ -47,7 +47,7 @@ function ToastContainer({ toasts, onDismiss }) {
     <div className="toast-container">
       {toasts.map(t => (
         <div key={t.id} className={`toast${t.exiting ? ' toast-exit' : ''}`}>
-          <span className="toast-icon">{TOAST_ICONS[t.type] || 'ℹ️'}</span>
+          <span className="toast-icon">{TOAST_ICONS[t.type] || 'i'}</span>
           <div className="toast-body">
             <p className="toast-title">{t.title}</p>
             {t.message && <p className="toast-msg">{t.message}</p>}

@@ -35,6 +35,18 @@ Thumbs.db
 # Logs
 *.log
 eta_pdf_errors.log
+uvicorn.log
+uvicorn_err.log
+backend.log
+frontend.log
+
+# ML training artifacts (checkpoints are large and not needed at runtime)
+eta/backend/ml/semantic_model/checkpoint-*/
+eta/backend/ml/fine_tune*.log
+
+# Training data archives (downloaded on demand, not needed at runtime)
+eta/backend/ml/data/*.bz2
+eta/backend/ml/data/*.gz
 
 # Environment
 .env

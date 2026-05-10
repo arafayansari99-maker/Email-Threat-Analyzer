@@ -32,14 +32,23 @@ HAS_HIBP    = bool(HIBP_KEY)
 
 
 # ── HTTP client helper ─────────────────────────────────────────────────────────
-def _fetch(url: str, headers: dict, params: dict = None, timeout: int = 10) -> dict:
+# Hard cap: no single external API call may take longer than this.
+_DEFAULT_TIMEOUT = 8   # seconds per request
+_MAX_TOTAL_BUDGET = 20  # seconds total across all calls in one analysis
+
+
+def _fetch(url: str, headers: dict, params: dict = None, timeout: int = _DEFAULT_TIMEOUT) -> dict:
     import requests
     try:
-        r = requests.get(url, headers=headers, params=params, timeout=timeout)
+        r = requests.get(url, headers=headers, params=params,
+                         timeout=(3, timeout))  # (connect, read) timeout tuple
         r.raise_for_status()
         return r.json()
+    except requests.Timeout:
+        logger.warning("Threat intel request timed out: %s", url)
+        return {"error": "timeout"}
     except requests.RequestException as e:
-        logger.warning(f"Threat intel request failed for {url}: {e}")
+        logger.warning("Threat intel request failed for %s: %s", url, e)
         return {"error": str(e)}
 
 
@@ -56,10 +65,13 @@ def vt_lookup_url(url: str) -> dict:
         return {"available": False, "error": rid["error"]}
     analysis_id = rid.get("data", {}).get("id", "")
 
-    # Step 2: poll for result (up to 3 attempts, 2 s apart)
-    for _ in range(3):
-        time.sleep(2)
-        result = _fetch(f"https://www.virustotal.com/api/v3/analyses/{analysis_id}", headers)
+    # Step 2: poll for result — max 2 attempts, 1 s apart, hard wall-clock cap of 10 s
+    deadline = time.monotonic() + 10
+    for _ in range(2):
+        time.sleep(1)
+        if time.monotonic() > deadline:
+            break
+        result = _fetch(f"https://www.virustotal.com/api/v3/analyses/{analysis_id}", headers, timeout=6)
         if "error" in result:
             return {"available": False, "error": result["error"]}
         attrs = result.get("data", {}).get("attributes", {})
@@ -202,15 +214,141 @@ def hybrid_lookup_hash(file_hash: str) -> dict:
     }
 
 
-# ── Threat Feed URL Check ─────────────────────────────────────────────────────
-KNOWN_BAD_DOMAINS = [
-    "malware-check.net", "phishing-site.cc", "evil-redirect.com",
-    "credential-harvest.io", "fake-login.org", "suspicious-bank.com",
-]
+# ── Live Threat Feed Manager ──────────────────────────────────────────────────
+import json
+import threading
+from pathlib import Path
+
+_FEED_CACHE_PATH = Path(__file__).parent / "ml" / "feed_cache.json"
+_FEED_LOCK = threading.Lock()
+
+# Feed sources (no API key required)
+_OPENPHISH_URL = "https://openphish.com/feed.txt"
+_URLHAUS_URL   = "https://urlhaus.abuse.ch/downloads/csv_recent/"
+
+# How long (seconds) before re-fetching each feed
+_OPENPHISH_TTL = 43200   # 12 hours
+_URLHAUS_TTL   = 3600    # 1 hour
+_MAX_FEED_DOMAINS = 50000  # cap to avoid unbounded memory
+
+
+def _load_feed_cache() -> dict:
+    try:
+        if _FEED_CACHE_PATH.exists():
+            return json.loads(_FEED_CACHE_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_feed_cache(cache: dict) -> None:
+    try:
+        _FEED_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _FEED_CACHE_PATH.write_text(json.dumps(cache))
+    except Exception:
+        pass
+
+
+def _fetch_openphish(now: float) -> dict:
+    """Download OpenPhish feed and return {domains: [...], fetched_at: ts}."""
+    try:
+        resp = requests.get(_OPENPHISH_URL, timeout=10)
+        resp.raise_for_status()
+        domains = set()
+        for line in resp.text.splitlines():
+            line = line.strip()
+            if not line or not line.startswith("http"):
+                continue
+            try:
+                from urllib.parse import urlparse
+                d = urlparse(line).netloc.lower().split(":")[0]
+                if d:
+                    domains.add(d)
+            except Exception:
+                continue
+        return {"domains": list(domains)[:_MAX_FEED_DOMAINS], "fetched_at": now}
+    except Exception as e:
+        logger.warning(f"OpenPhish feed fetch failed: {e}")
+        return {}
+
+
+def _fetch_urlhaus(now: float) -> dict:
+    """Download URLhaus recent CSV and return {domains: [...], fetched_at: ts}."""
+    try:
+        resp = requests.get(_URLHAUS_URL, timeout=15)
+        resp.raise_for_status()
+        domains = set()
+        for line in resp.text.splitlines():
+            if line.startswith("#") or not line.strip():
+                continue
+            parts = line.split(",")
+            if len(parts) < 2:
+                continue
+            url = parts[1].strip().strip('"')
+            if not url.startswith("http"):
+                continue
+            try:
+                from urllib.parse import urlparse
+                d = urlparse(url).netloc.lower().split(":")[0]
+                if d:
+                    domains.add(d)
+            except Exception:
+                continue
+        return {"domains": list(domains)[:_MAX_FEED_DOMAINS], "fetched_at": now}
+    except Exception as e:
+        logger.warning(f"URLhaus feed fetch failed: {e}")
+        return {}
+
+
+def get_live_threat_domains() -> set:
+    """
+    Return a set of known-malicious domains from cached live feeds.
+    Refreshes feeds in the background when their TTL expires.
+    Thread-safe; never blocks the caller for more than ~100 ms.
+    """
+    now = time.time()
+    with _FEED_LOCK:
+        cache = _load_feed_cache()
+
+        openphish = cache.get("openphish", {})
+        urlhaus   = cache.get("urlhaus", {})
+
+        needs_openphish = now - openphish.get("fetched_at", 0) > _OPENPHISH_TTL
+        needs_urlhaus   = now - urlhaus.get("fetched_at", 0)   > _URLHAUS_TTL
+
+        if needs_openphish:
+            fresh = _fetch_openphish(now)
+            if fresh:
+                cache["openphish"] = fresh
+                openphish = fresh
+        if needs_urlhaus:
+            fresh = _fetch_urlhaus(now)
+            if fresh:
+                cache["urlhaus"] = fresh
+                urlhaus = fresh
+
+        if needs_openphish or needs_urlhaus:
+            _save_feed_cache(cache)
+
+    domains: set = set()
+    domains.update(openphish.get("domains", []))
+    domains.update(urlhaus.get("domains", []))
+    return domains
+
+
+# ── Static fallback patterns (URL shorteners, suspicious paths) ───────────────
 KNOWN_BAD_PATTERNS = [
     r"bit\.ly/\w+", r"tinyurl\.com/\w+", r"goo\.gl/\w+",
     r"t\.co/\w+", r"ow\.ly/\w+", r"is\.gd/\w+", r"buff\.ly/\w+",
+    r"rebrand\.ly/\w+", r"short\.io/\w+", r"cutt\.ly/\w+",
     r"dl\.git", r"pastebin\.com", r"anonfile\.com", r"mediafire\.com",
+    r"discord\.gg/\w+", r"telegra\.ph/\w+",
+]
+
+# Legacy static list — supplemented by live feeds at runtime
+KNOWN_BAD_DOMAINS = [
+    "malware-check.net", "phishing-site.cc", "evil-redirect.com",
+    "credential-harvest.io", "fake-login.org", "suspicious-bank.com",
 ]
 TRUSTED_DOMAINS = {
     "google.com", "google.co.uk", "google.com.au",
@@ -289,10 +427,29 @@ def check_url_against_feeds(url: str) -> dict:
     if len(hit_words) >= 2:
         flags.append({"flag": "suspicious_path", "label": f"Suspicious path keywords: {', '.join(hit_words)}", "severity": "high"})
 
-    # Known bad domain
+    # Static known-bad domains
     for bad in KNOWN_BAD_DOMAINS:
         if bad in domain_clean:
-            flags.append({"flag": "known_bad_domain", "label": f"Domain matches known threat list ({bad})", "severity": "critical"})
+            flags.append({"flag": "known_bad_domain",
+                          "label": f"Domain matches static threat list ({bad})",
+                          "severity": "critical"})
+
+    # Live feed check (OpenPhish + URLhaus)
+    try:
+        live_domains = get_live_threat_domains()
+        # Check exact domain and parent domain
+        check_variants = {domain_clean}
+        parts = domain_clean.rsplit(".", 2)
+        if len(parts) >= 2:
+            check_variants.add(".".join(parts[-2:]))
+        for variant in check_variants:
+            if variant in live_domains:
+                flags.append({"flag": "live_feed_match",
+                              "label": f"Domain found in live threat feed ({variant})",
+                              "severity": "critical"})
+                break
+    except Exception:
+        pass
 
     # Trusted domain whitelist
     is_trusted = any(domain_clean.endswith(f".{td}") or domain_clean == td for td in TRUSTED_DOMAINS)
@@ -698,6 +855,204 @@ def hibp_check_password(password: str) -> dict:
         return {"available": True, "error": f"status {r.status_code}"}
     except Exception as e:
         return {"available": True, "error": str(e)[:50]}
+
+
+def _score_vt_url(vt: dict) -> int:
+    """Score a VirusTotal URL lookup result, 0-100."""
+    if not vt.get("available"):
+        return 0
+    mal = vt.get("malicious", 0)
+    sus = vt.get("suspicious", 0)
+    total = vt.get("total", 0)
+    if mal > 0:
+        ratio = mal / max(total, 1)
+        return int(60 + ratio * 40)  # 60–100 based on proportion
+    if sus > 0:
+        ratio = sus / max(total, 1)
+        return int(30 + ratio * 30)  # 30–60
+    return 0  # clean
+
+
+def _score_abuseipdb(ab: dict) -> int:
+    """Score an AbuseIPDB lookup result, 0–100."""
+    if not ab.get("available"):
+        return 0
+    score = ab.get("abuse_score", 0)
+    # country / isp / tor / vpn are supplementary context
+    tor   = ab.get("is_tor", False)
+    vpn   = ab.get("is_vpn", False)
+    hosting = ab.get("is_hosting", False)
+    if tor or hosting:
+        score = max(score, 60)
+    if vpn:
+        score = max(score, 40)
+    return min(100, score)
+
+
+def enrich_ioc_scores(urls: list, ip: str = None, sender_domain: str = None) -> dict:
+    """
+    Run live threat-intel lookups and return structured per-IOC scores.
+
+    Each returned dict contains:
+      - score       : 0–100 (higher = more dangerous)
+      - tier        : "critical" | "high" | "medium" | "low" | "none"
+      - label       : human-readable summary of the signal
+      - sources     : list of sources that contributed (e.g. ["VirusTotal","AbuseIPDB"])
+
+    When no APIs are configured, all scores default to 0 and label describes
+    the local-only signal that *would* have been checked.
+    """
+    result = {
+        "urls":    [],
+        "ip":      None,
+        "domain":  None,
+    }
+
+    # ── URL scoring ───────────────────────────────────────────────────────────
+    for url in (urls or [])[:8]:
+        entry: dict = {
+            "url":     url,
+            "score":   0,
+            "tier":    "none",
+            "label":   "clean",
+            "sources": [],
+        }
+
+        # 1. Local feed check
+        try:
+            feed = check_url_against_feeds(url)
+            if feed.get("verdict") == "malicious":
+                entry["score"] = max(entry["score"], 75)
+                entry["tier"]   = "critical"
+                entry["label"]  = f"Listed in threat feed ({feed.get('flags', [{}])[0].get('flag','?')})"
+                entry["sources"].append("OpenPhish/URLhaus")
+            elif feed.get("verdict") == "suspicious":
+                sev = feed.get("severity", "medium")
+                entry["score"] = max(entry["score"], {"high": 60, "medium": 40, "low": 20}.get(sev, 30))
+                entry["tier"]   = "medium"
+                entry["label"]  = f"Suspicious URL pattern: {feed.get('flags', [{}])[0].get('label','?')}"
+                entry["sources"].append("LocalHeuristics")
+        except Exception:
+            pass
+
+        # 2. VirusTotal
+        try:
+            vt = vt_lookup_url(url)
+            if vt.get("available"):
+                entry["sources"].append("VirusTotal")
+                s = _score_vt_url(vt)
+                entry["score"] = max(entry["score"], s)
+                if s >= 80:
+                    entry["tier"] = "critical"
+                    entry["label"] = f"VirusTotal: {vt.get('malicious',0)}/{vt.get('total',0)} engines flag malicious"
+                elif s >= 60:
+                    entry["tier"] = "high"
+                    entry["label"] = f"VirusTotal: {vt.get('malicious',0)} malicious, {vt.get('suspicious',0)} suspicious"
+                elif s >= 30:
+                    if entry["tier"] not in ("critical", "high"):
+                        entry["tier"] = "medium"
+                        entry["label"] = f"VirusTotal: {vt.get('suspicious',0)} suspicious flags"
+        except Exception:
+            pass
+
+        # Cap and normalise
+        entry["score"] = min(100, entry["score"])
+        result["urls"].append(entry)
+
+    # ── IP scoring ────────────────────────────────────────────────────────────
+    if ip:
+        entry: dict = {
+            "ip":      ip,
+            "score":   0,
+            "tier":    "none",
+            "label":   "no threat intelligence signal",
+            "sources": [],
+        }
+        # Private IP is always a threat signal (internal infrastructure)
+        import re as _re
+        if _re.match(r"^(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0)", ip):
+            entry["score"] = 90
+            entry["tier"]   = "high"
+            entry["label"]  = "Private/reserved IP address — not a public relay"
+            entry["sources"].append("LocalHeuristics")
+        else:
+            try:
+                ab = abuseipdb_lookup(ip)
+                if ab.get("available"):
+                    entry["sources"].append("AbuseIPDB")
+                    s = _score_abuseipdb(ab)
+                    entry["score"] = max(entry["score"], s)
+                    if s >= 70:
+                        entry["tier"] = "critical"
+                        entry["label"] = f"AbuseIPDB: abuse score {s}, {ab.get('total_reports',0)} reports"
+                    elif s >= 40:
+                        entry["tier"] = "high"
+                        entry["label"] = f"AbuseIPDB: abuse score {s}"
+                    elif s > 0:
+                        entry["tier"] = "low"
+                        entry["label"] = f"AbuseIPDB: minimal concern (score {s})"
+            except Exception:
+                pass
+
+            try:
+                sh = shodan_lookup(ip)
+                if sh.get("available"):
+                    entry["sources"].append("Shodan")
+                    vulns = len(sh.get("vulnerabilities", []))
+                    if vulns > 0:
+                        entry["score"] = max(entry["score"], min(100, 50 + vulns * 5))
+                        entry["tier"]   = "high"
+                        entry["label"]  = f"Shodan: {vulns} known vulnerabilities on this host"
+                    entry["score"] = max(entry["score"], 20)
+                    if entry["tier"] == "none":
+                        entry["tier"]   = "low"
+                        entry["label"]  = "Shodan: host present in Shodan database (no known vulns)"
+            except Exception:
+                pass
+
+        result["ip"] = entry
+
+    # ── Domain scoring ─────────────────────────────────────────────────────────
+    if sender_domain:
+        entry: dict = {
+            "domain":  sender_domain,
+            "score":   0,
+            "tier":    "none",
+            "label":   "no threat intelligence signal",
+            "sources": [],
+        }
+        _KNOWN_SAFE_DOMAINS = {
+            "google.com","accounts.google.com","github.com","microsoft.com",
+            "live.com","outlook.com","apple.com","amazon.com","paypal.com",
+            "stripe.com","shopify.com","slack.com","zoom.us","dropbox.com",
+            "linkedin.com","twitter.com","x.com","facebook.com","instagram.com",
+        }
+        if any(sender_domain.endswith("." + d) or sender_domain == d for d in _KNOWN_SAFE_DOMAINS):
+            entry["score"] = 0
+            entry["tier"]   = "none"
+            entry["label"]  = "Trusted domain (no signal)"
+        else:
+            try:
+                ab = abuseipdb_lookup(sender_domain)
+                if ab.get("available"):
+                    entry["sources"].append("AbuseIPDB")
+                    s = _score_abuseipdb(ab)
+                    entry["score"] = max(entry["score"], s)
+                    if s >= 60:
+                        entry["tier"]  = "high"
+                        entry["label"] = f"AbuseIPDB: domain has abuse confidence {s}%"
+                    elif s > 0:
+                        entry["tier"]  = "low"
+                        entry["label"] = f"AbuseIPDB: domain appears in reports (score {s})"
+            except Exception:
+                pass
+
+        result["domain"] = entry
+
+    return result
+
+
+def enrich_with_threat_intel(urls=None, ip=None, email_from=None):
     """
     Run all available threat intel lookups for the given indicators.
     Call this from the analysis engine after header parsing.

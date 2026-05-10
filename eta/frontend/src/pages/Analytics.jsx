@@ -1,7 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { getStats, getScanTrends, getIOCStats, getRiskDistribution, getTimeAnalysis } from '../services/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 export default function Analytics() {
+  const isMobile = useIsMobile()
+  const location = useLocation()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [animReady, setAnimReady] = useState(false)
@@ -12,12 +16,12 @@ export default function Analytics() {
   const [iocData, setIocData] = useState({ top_domains: [], top_ips: [], top_senders: [] })
   const [riskData, setRiskData] = useState({ buckets: [], average: 0 })
   const [timeData, setTimeData] = useState({ hourly: [], daily: [] })
+  const trendDaysRef = useRef(14)
 
+  // Reload every time the user navigates to this page (catches new scans from Analyze page)
   useEffect(() => {
     loadData()
-    // Trigger animations after mount
-    setTimeout(() => setAnimReady(true), 100)
-  }, [])
+  }, [location.key])
 
   useEffect(() => {
     if (!loading) {
@@ -26,18 +30,20 @@ export default function Analytics() {
   }, [loading])
 
   const loadData = () => {
+    setLoading(true)
+    setAnimReady(false)
     let unblocked = false
     const unblock = () => { if (!unblocked) { unblocked = true; setLoading(false) } }
     const go = (p, cb) => p.then(r => cb(r.data ?? r)).catch(() => {})
 
     // Stats resolves fastest (single SQL query) — unblocks the page immediately
     go(getStats(), data => { setStats(data); unblock() })
-    go(getScanTrends(14), data => setTrends(data ?? []))
+    go(getScanTrends(trendDaysRef.current), data => setTrends(data ?? []))
     go(getIOCStats(10), data => setIocData(data ?? { top_domains: [], top_ips: [], top_senders: [] }))
     go(getRiskDistribution(), data => setRiskData(data ?? { buckets: [], average: 0 }))
     go(getTimeAnalysis(), data => setTimeData(data ?? { hourly: [], daily: [] }))
-    // Fallback: unblock within 1.5 seconds if stats slow
-    setTimeout(unblock, 1500)
+    // Fallback: unblock within 2 seconds if stats are slow
+    setTimeout(unblock, 2000)
   }
 
   const getPercent = (val) => {
@@ -56,17 +62,58 @@ export default function Analytics() {
   const maxRisk = riskData.buckets.length > 0 ? Math.max(...riskData.buckets.map(b => b.count || 0), 1) : 1
   const maxHour = timeData.hourly.length > 0 ? Math.max(...timeData.hourly.map(h => h.total || 0), 1) : 1
 
-  if (loading) return <div style={{ padding: '1.5rem', color: '#64748B' }}>Loading...</div>
+  // Skeleton shown only on first load (no data yet); subsequent refreshes update in place
+  if (loading && !stats) return (
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
+      <div className="skeleton skeleton-text" style={{ width: 160, height: 28, marginBottom: '0.5rem' }} />
+      <div className="skeleton skeleton-text" style={{ width: 280, height: 16, marginBottom: '2rem' }} />
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '140px' : '200px'}, 1fr))`, gap: '1rem', marginBottom: '2rem' }}>
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} style={{ background: 'var(--card)', padding: isMobile ? '1rem' : '1.5rem', borderRadius: 12, border: '1px solid var(--border)' }}>
+            <div className="skeleton skeleton-text" style={{ width: '60%', marginBottom: '0.75rem' }} />
+            <div className="skeleton" style={{ width: '40%', height: 40, borderRadius: 6 }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '1rem' }}>
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} style={{ background: 'var(--card)', padding: '1.5rem', borderRadius: 12, border: '1px solid var(--border)', height: 200 }}>
+            <div className="skeleton skeleton-text" style={{ width: '40%', marginBottom: '1rem' }} />
+            <div className="skeleton" style={{ width: '100%', height: 140, borderRadius: 6 }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 
   return (
-    <div style={{ padding: '1.5rem' }}>
-      <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Analytics</h1>
-      <p style={{ color: '#64748B', fontSize: '0.9375rem', marginBottom: '2rem' }}>Overview of your threat analysis statistics</p>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.25rem' }}>Analytics</h1>
+          <p style={{ color: '#64748B', fontSize: '0.9375rem' }}>Overview of your threat analysis statistics</p>
+        </div>
+        <button
+          onClick={loadData}
+          disabled={loading}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.375rem',
+            padding: '0.5rem 1rem', borderRadius: 8,
+            border: '1px solid var(--border)', background: 'var(--surface)',
+            color: loading ? 'var(--sub)' : 'var(--text)',
+            fontSize: '0.8125rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+            transition: 'all 0.15s',
+          }}
+        >
+          <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: loading ? 'rotate(360deg)' : 'none' }}>↻</span>
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
 
       {/* Stats Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '140px' : '200px'}, 1fr))`, gap: '1rem', marginBottom: '2rem' }}>
         {statCards.map((card, idx) => (
-          <div key={card.label} style={{ background: 'var(--card)', padding: '1.5rem', borderRadius: 12, border: '1px solid var(--border)', opacity: animReady ? 1 : 0, transform: animReady ? 'none' : 'translateY(20px)', transition: 'all 0.5s ease-out', transitionDelay: (idx * 0.1) + 's' }}>
+          <div key={card.label} style={{ background: 'var(--card)', padding: isMobile ? '1rem' : '1.5rem', borderRadius: 12, border: '1px solid var(--border)', opacity: animReady ? 1 : 0, transform: animReady ? 'none' : 'translateY(20px)', transition: 'all 0.5s ease-out', transitionDelay: (idx * 0.1) + 's' }}>
             <p style={{ color: '#64748B', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{card.label}</p>
             <p style={{ fontSize: '2.5rem', fontWeight: 'bold', color: card.color, opacity: animReady ? 1 : 0, transform: animReady ? 'none' : 'translateY(10px)', transition: 'all 0.5s ease-out', transitionDelay: ((idx * 0.1) + 0.2) + 's' }}>{card.value}</p>
           </div>
@@ -75,7 +122,7 @@ export default function Analytics() {
 
       {/* Threat Distribution Bar */}
       {stats?.total > 0 && (
-        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem', marginBottom: '1.5rem' }}>
           <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Threat Distribution</h2>
           <div style={{ display: 'flex', height: 32, borderRadius: 8, overflow: 'hidden', marginBottom: '1rem' }}>
             {(stats?.malicious || stats?.verdict_counts?.malicious || 0) > 0 && (
@@ -106,7 +153,7 @@ export default function Analytics() {
       )}
 
       {/* ── 1. TREND VISUALIZATION ── */}
-      <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>Scan Trends Over Time</h2>
@@ -116,6 +163,7 @@ export default function Analytics() {
             {[7, 14, 30, 90].map(d => (
               <button key={d} onClick={() => {
                 setTrendDays(d)
+                trendDaysRef.current = d
                 getScanTrends(d).then(r => setTrends(r.data || [])).catch(() => {})
               }}
                 style={{
@@ -131,8 +179,8 @@ export default function Analytics() {
           </div>
         </div>
 
-        {/* Fixed 180px chart — percentage heights inside flex:1 with no fixed ancestor collapse to 0 */}
-        <div style={{ position: 'relative', height: 180, marginBottom: 6 }}>
+        {/* Fixed chart — percentage heights inside flex:1 with no fixed ancestor collapse to 0 */}
+        <div style={{ position: 'relative', height: isMobile ? 160 : 200, marginBottom: 6 }}>
           {/* Gridlines */}
           {[25, 50, 75, 100].map(p => (
             <div key={p} style={{ position: 'absolute', left: 0, right: 0, bottom: p + '%', borderTop: '1px dashed rgba(100,116,139,0.15)', pointerEvents: 'none' }} />
@@ -146,7 +194,7 @@ export default function Analytics() {
                   </div>
                 ))
               : trends.map((t, i) => {
-                  const CHART_H = 180
+                  const CHART_H = isMobile ? 160 : 200
                   const safe = Math.max(t.safe || 0, 0)
                   const sus  = Math.max(t.suspicious || 0, 0)
                   const mal  = Math.max(t.malicious || 0, 0)
@@ -194,11 +242,11 @@ export default function Analytics() {
       </div>
 
       {/* ── 2. IOC ANALYTICS + RISK DISTRIBUTION SIDE BY SIDE ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '280px' : '320px'}, 1fr))`, gap: '1.5rem', marginBottom: '1.5rem' }}>
 
         {/* IOC Analytics */}
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem' }}>
-          <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>🎯 IOC Analytics</h2>
+          <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>IOC Analytics</h2>
 
           {/* Top Malicious Domains */}
           <div style={{ marginBottom: '1rem' }}>
@@ -255,7 +303,7 @@ export default function Analytics() {
         {/* Risk Distribution */}
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexShrink: 0 }}>
-            <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>⚠️ Risk Score Distribution</h2>
+            <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>Risk Score Distribution</h2>
             <div style={{ background: 'var(--cyan)', padding: '0.25rem 0.625rem', borderRadius: 8 }}>
               <span style={{ color: 'var(--text)', fontSize: '0.6875rem' }}>Avg: </span>
               <span style={{ color: 'var(--text)', fontWeight: 700, fontSize: '0.875rem' }}>{riskData.average}</span>
@@ -302,13 +350,12 @@ export default function Analytics() {
       </div>
 
       {/* ── 3. TIME-BASED ANALYSIS ── */}
-      <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem', marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
-          <span style={{ background: '#8B5CF620', color: '#8B5CF6', padding: '0.375rem', borderRadius: 6, fontSize: '1rem' }}>⏱</span>
           <h2 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, margin: 0 }}>Time-Based Analysis</h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '280px' : '300px'}, 1fr))`, gap: '1.5rem' }}>
 
           {/* Scans by Hour */}
           <div style={{ background: 'var(--surface)', borderRadius: 10, padding: '1.25rem', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
@@ -319,14 +366,14 @@ export default function Analytics() {
 
             {/* flex:1 pushes chart+axis+legend to the bottom of the card */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-              {/* Fixed 180px container — % heights inside flex:1 with no fixed ancestor collapse to 0 */}
-              <div style={{ position: 'relative', height: 180 }}>
+              {/* Fixed container — % heights inside flex:1 with no fixed ancestor collapse to 0 */}
+              <div style={{ position: 'relative', height: isMobile ? 160 : 200 }}>
                 {[25, 50, 75, 100].map(pct => (
                   <div key={pct} style={{ position: 'absolute', left: 0, right: 0, bottom: pct + '%', borderTop: '1px dashed rgba(100,116,139,0.18)', pointerEvents: 'none' }} />
                 ))}
                 <div style={{ display: 'flex', alignItems: 'flex-end', height: '100%', gap: '3px' }}>
                   {timeData.hourly.map((h, i) => {
-                    const CHART_H = 180
+                    const CHART_H = isMobile ? 160 : 200
                     const safeH = maxHour > 0 ? (h.safe       / maxHour) * CHART_H : 0
                     const susH  = maxHour > 0 ? (h.suspicious / maxHour) * CHART_H : 0
                     const malH  = maxHour > 0 ? (h.malicious  / maxHour) * CHART_H : 0

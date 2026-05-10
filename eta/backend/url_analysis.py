@@ -172,6 +172,17 @@ def analyze_single_url(url: str) -> Dict[str, Any]:
 
     result["risk_score"] = min(1.0, risk)
 
+    # ── Per-URL verdict: safe vs threat ─────────────────────────────────────
+    # "safe" unless at least one clear threat signal is present.
+    # Long URL / deep subdomains alone are not sufficient to mark as threat —
+    # they contribute to risk_score but not to a binary threat verdict.
+    if result["is_lookalike"] or result["suspicious_tld"] or result["url_shortener"] or result["has_ip"]:
+        result["verdict"] = "threat"
+    elif result["risk_score"] >= 0.3:
+        result["verdict"] = "threat"
+    else:
+        result["verdict"] = "safe"
+
     return result
 
 
@@ -221,6 +232,10 @@ def analyze_urls(urls: List[str]) -> Dict[str, Any]:
         "ip_urls": ip_urls,
         "ip_count": len(ip_urls),
         "total_risk_score": min(1.0, total_risk / max(1, len(urls))),
+        # Per-URL verdicts — safe IOCs get 'low' colour, threats get 'high'
+        "high_risk": [r["url"] for r in results if r["verdict"] == "threat"],
+        "low_risk":  [r["url"] for r in results if r["verdict"] == "safe"],
+        "all_urls":  [r["url"] for r in results],
     }
 
 

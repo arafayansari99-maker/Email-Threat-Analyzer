@@ -106,7 +106,9 @@ export default function SearchBar({ onClose }) {
     <div className="search-overlay" onClick={onClose}>
       <div className="search-modal" onClick={e => e.stopPropagation()}>
         <div className="search-input-wrap">
-          <span style={{ color: 'var(--sub)', fontSize: '1rem' }}>🔍</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{color:'var(--sub)',flexShrink:0}}>
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
           <input
             ref={inputRef}
             className="search-input"
@@ -126,7 +128,7 @@ export default function SearchBar({ onClose }) {
               {recentSearches.map((s, i) => (
                 <div key={i} className="search-result-item" onClick={() => setQuery(s)} onMouseEnter={() => setActiveIdx(i)}>
                   <div className="search-result-icon" style={{ background: 'var(--muted)', color: 'var(--sub)' }}>
-                    🕐
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500 }}>{s}</p>
@@ -148,13 +150,17 @@ export default function SearchBar({ onClose }) {
           {results.scans.length > 0 && (
             <>
               <div className="search-section-label">Scans ({results.scans.length})</div>
-              {results.scans.map(s => renderItem(s, `Scan #${s.scan_id} · ${new Date(s.created_at).toLocaleDateString()}`, '📧', 'var(--cyan)'))}
+              {results.scans.map(s => renderItem(s, `Scan #${s.scan_id} · ${new Date(s.created_at).toLocaleDateString()}`,
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+                'var(--cyan)'))}
             </>
           )}
           {results.users.length > 0 && (
             <>
               <div className="search-section-label">Users ({results.users.length})</div>
-              {results.users.map(u => renderItem(u, u.email, '👤', 'var(--amber)'))}
+              {results.users.map(u => renderItem(u, u.email,
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+                'var(--amber)'))}
             </>
           )}
         </div>

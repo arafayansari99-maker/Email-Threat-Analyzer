@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import api, { getHistory, getReport, downloadJSON, generatePDF, addFavourite, removeFavourite } from '../services/api'
 import { useToast } from '../hooks/useToast'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 export default function Report() {
+  const isMobile = useIsMobile()
   const { id } = useParams()
   const navigate = useNavigate()
   const [scans, setScans] = useState([])
@@ -211,15 +213,85 @@ export default function Report() {
 
   // Filter scans by search query and file type
   const filteredScans = scans.filter(scan => {
+    const q = searchQuery.toLowerCase()
     const matchesSearch = !searchQuery ||
-      (scan.filename && scan.filename.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (scan.sender && scan.sender.toLowerCase().includes(searchQuery.toLowerCase()))
+      (scan.filename && scan.filename.toLowerCase().includes(q)) ||
+      (scan.subject && scan.subject.toLowerCase().includes(q)) ||
+      (scan.sender && scan.sender.toLowerCase().includes(q))
     const matchesFileType = !fileTypeFilter ||
       (scan.filename && scan.filename.toLowerCase().endsWith(fileTypeFilter.toLowerCase()))
     return matchesSearch && matchesFileType
   })
 
-  const getColor = (v) => ({ malicious: '#EF4444', suspicious: '#F59E0B', safe: '#10B981' }[v] || '#64748B')
+  const getColor = (v) => ({ malicious: '#EF4444', suspicious: '#F59E0B', safe: '#10B981', unknown: '#64748B' }[v] || '#64748B')
+
+  const getIOCStatus = (iocObj) => {
+    const safeString = (value) => (value || '').toString().trim()
+    const normalizeUrl = (url) => safeString(url).replace(/\/+$|\s+/g, '').toLowerCase()
+    const statusFromVerdict = (verdict, score) => {
+      const v = safeString(verdict).toLowerCase()
+      if (v === 'malicious' || v === 'high' || v === 'danger') return 'malicious'
+      if (v === 'suspicious' || v === 'medium' || v === 'warning') return 'suspicious'
+      if (v === 'safe' || v === 'benign' || v === 'low') return 'safe'
+      if (typeof score === 'number') {
+        if (score >= 70) return 'malicious'
+        if (score >= 40) return 'suspicious'
+        return 'safe'
+      }
+      return 'unknown'
+    }
+
+    if (!iocObj) return 'unknown'
+    const value = safeString(iocObj.value || iocObj)
+    const type = safeString(iocObj.type).toLowerCase()
+    if (iocObj.risk) {
+      return safeString(iocObj.risk).toLowerCase()
+    }
+
+    const urls = report?.url_analysis?.urls || []
+    const attachments = report?.attachment_analysis?.attachments || []
+
+    if (type === 'url') {
+      const match = urls.find((u) => normalizeUrl(u.url) === normalizeUrl(value) || normalizeUrl(u.url).endsWith(normalizeUrl(value)))
+      if (match) return statusFromVerdict(match.verdict, match.score)
+    }
+
+    if (type === 'domain') {
+      const domain = value.toLowerCase()
+      const matches = urls.filter((u) => {
+        try {
+          const hostname = new URL(safeString(u.url)).hostname.toLowerCase()
+          return hostname === domain || hostname.endsWith(`.${domain}`)
+        } catch {
+          return safeString(u.url).toLowerCase().includes(domain)
+        }
+      })
+      if (matches.length > 0) {
+        const statuses = matches.map((u) => statusFromVerdict(u.verdict, u.score))
+        return statuses.includes('malicious') ? 'malicious' : statuses.includes('suspicious') ? 'suspicious' : 'safe'
+      }
+    }
+
+    if (type === 'hash') {
+      const match = attachments.find((a) => safeString(a.sha256).toLowerCase() === value.toLowerCase() || safeString(a.md5).toLowerCase() === value.toLowerCase())
+      if (match) {
+        return statusFromVerdict(match.risk, match.score)
+      }
+      if (attachments.some((a) => a.is_malicious_extension || a.is_risky_extension)) {
+        return 'suspicious'
+      }
+    }
+
+    if (type === 'ip') {
+      const ipReputation = report?.threat_intel?.ip_reputation || []
+      const match = Array.isArray(ipReputation)
+        ? ipReputation.find((entry) => safeString(entry.ip).toLowerCase() === value.toLowerCase())
+        : ipReputation
+      if (match) return statusFromVerdict(match.verdict || match.risk, match.score || match.risk_score)
+    }
+
+    return 'unknown'
+  }
 
   if (loading) {
     return (
@@ -230,7 +302,7 @@ export default function Report() {
   }
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
       <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Reports</h1>
       <p style={{ color: '#64748B', fontSize: '0.9375rem', marginBottom: '2rem' }}>View and export detailed threat reports</p>
 
@@ -240,7 +312,7 @@ export default function Report() {
         <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
           <input
             type="text"
-            placeholder="Search by filename or sender..."
+            placeholder="Search by subject, sender, or filename..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -249,7 +321,9 @@ export default function Report() {
               color: 'var(--text)', fontSize: '0.875rem',
             }}
           />
-          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#64748B', fontSize: '0.875rem' }}>🔍</span>
+          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#64748B', lineHeight: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
         </div>
 
         {/* File Type Filter */}
@@ -269,7 +343,7 @@ export default function Report() {
         </select>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '320px 1fr', gap: '1.5rem' }}>
         {/* Scan List Sidebar */}
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', height: 'fit-content' }}>
           <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)' }}>
@@ -309,8 +383,18 @@ export default function Report() {
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ color: 'var(--text)', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{scan.filename}</p>
-                    <p style={{ color: '#4B5563', fontSize: '0.6875rem' }}>{new Date(scan.created_at).toLocaleDateString()}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.125rem' }}>
+                      {scan.source === 'imap' && (
+                        <span style={{ flexShrink: 0, padding: '0.05rem 0.3rem', borderRadius: 3, background: '#06B6D420', color: '#06B6D4', fontSize: '0.5625rem', fontWeight: 700, textTransform: 'uppercase' }}>IMAP</span>
+                      )}
+                      <p style={{ color: 'var(--text)', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>
+                        {scan.subject || scan.filename}
+                      </p>
+                    </div>
+                    {scan.sender && (
+                      <p style={{ color: '#6B7280', fontSize: '0.6875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.1rem' }}>{scan.sender}</p>
+                    )}
+                    <p style={{ color: '#4B5563', fontSize: '0.6rem' }}>{new Date(scan.created_at).toLocaleDateString()}</p>
                   </div>
                   <span style={{
                     padding: '0.125rem 0.375rem', borderRadius: 4, fontSize: '0.625rem',
@@ -329,7 +413,6 @@ export default function Report() {
         <div>
           {!selectedScan ? (
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '3rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📋</div>
               <p style={{ color: '#64748B', marginBottom: '0.75rem', fontSize: '0.9375rem' }}>Select a scan from the left to view its detailed report</p>
               <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                 <Link to="/analyze" style={{ color: '#06B6D4', textDecoration: 'none', fontSize: '0.875rem' }}>Run Analysis</Link>
@@ -350,7 +433,17 @@ export default function Report() {
                       {isFav ? '⭐' : '☆'}
                     </button>
                     <div>
-                      <h2 style={{ color: 'var(--text)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.375rem' }}>{selectedScan.filename}</h2>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.25rem' }}>
+                        {selectedScan.source === 'imap' && (
+                          <span style={{ padding: '0.15rem 0.4rem', borderRadius: 4, background: '#06B6D420', color: '#06B6D4', fontSize: '0.625rem', fontWeight: 700, textTransform: 'uppercase' }}>IMAP</span>
+                        )}
+                        <h2 style={{ color: 'var(--text)', fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
+                          {selectedScan.subject || selectedScan.filename}
+                        </h2>
+                      </div>
+                      {selectedScan.sender && (
+                        <p style={{ color: '#6B7280', fontSize: '0.8125rem', marginBottom: '0.2rem' }}>From: {selectedScan.sender}</p>
+                      )}
                       <p style={{ color: '#4B5563', fontSize: '0.75rem' }}>Scan #{selectedScan.scan_id} · {new Date(selectedScan.created_at).toLocaleString()}</p>
                     </div>
                   </div>
@@ -363,8 +456,50 @@ export default function Report() {
                   </span>
                 </div>
 
+                {/* Sender Domain Intelligence */}
+                {report?.meta?.sender_domain && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', padding: '0.875rem 1rem', background: 'var(--surface)', borderRadius: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 200 }}>
+                      <span style={{ color: '#64748B', fontSize: '0.75rem' }}>Domain:</span>
+                      <code style={{ color: '#06B6D4', fontSize: '0.8125rem', background: 'var(--muted)', padding: '0.1rem 0.4rem', borderRadius: 3, wordBreak: 'break-all' }}>
+                        {report.meta.sender_domain}
+                      </code>
+                    </div>
+                    {report.header_analysis?.domain_reputation?.suspicious_tld && (
+                      <span style={{ padding: '0.15rem 0.5rem', borderRadius: 4, background: 'rgba(239,68,68,0.15)', color: '#EF4444', fontSize: '0.6875rem', fontWeight: 600 }}>Suspicious TLD</span>
+                    )}
+                    {report.ml_analysis?.domain_entropy != null && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <span style={{ color: '#64748B', fontSize: '0.75rem' }}>Domain Entropy:</span>
+                        <span style={{
+                          padding: '0.1rem 0.5rem', borderRadius: 4,
+                          fontSize: '0.75rem', fontWeight: 700,
+                          background: report.ml_analysis.domain_entropy > 3.5 ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)',
+                          color: report.ml_analysis.domain_entropy > 3.5 ? '#EF4444' : '#10B981',
+                        }}>
+                          {report.ml_analysis.domain_entropy.toFixed(2)}
+                          {report.ml_analysis.domain_entropy > 3.5 ? ' (high — likely random/throwaway)' : ' (normal)'}
+                        </span>
+                      </div>
+                    )}
+                    {report.authentication && (
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        {[['SPF', report.authentication?.spf_status], ['DKIM', report.authentication?.dkim_status], ['DMARC', report.authentication?.dmarc_status]].filter(([, v]) => v).map(([k, v]) => (
+                          <span key={k} style={{
+                            padding: '0.1rem 0.4rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 600,
+                            background: v === 'pass' ? 'rgba(16,185,129,0.15)' : v === 'fail' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
+                            color: v === 'pass' ? '#10B981' : v === 'fail' ? '#EF4444' : '#F59E0B',
+                          }}>
+                            {k}: {v}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Stats Row */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '90px' : '120px'}, 1fr))`, gap: '0.75rem', marginBottom: '1.25rem' }}>
                   <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', textAlign: 'center' }}>
                     <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', marginBottom: '0.25rem', letterSpacing: '0.05em' }}>Risk Score</p>
                     <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: getColor(selectedScan.verdict) }}>{selectedScan.risk_score ?? 0}</p>
@@ -380,7 +515,7 @@ export default function Report() {
                 </div>
 
                 {/* Export Buttons */}
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                   <button onClick={handleExportJSON} disabled={exporting} style={{
                     flex: 1, padding: '0.75rem', borderRadius: 8,
                     background: '#06B6D4', color: 'var(--text)', border: 'none',
@@ -409,12 +544,157 @@ export default function Report() {
                       // Generate fallback summary from available data
                       `Verdict: ${report.verdict?.toUpperCase() || 'UNKNOWN'}` +
                       ` | Risk Score: ${report.risk_score || 0}/100` +
-                      (report.ml_analysis?.phishing_probability != null
-                        ? ` | Phishing Probability: ${(report.ml_analysis.phishing_probability * 100).toFixed(0)}%`
-                        : report.risk_score > 0 ? ` (${report.risk_score}%)` : '') +
+                      (report.risk_score != null
+                        ? ` | Phishing Probability: ${report.risk_score.toFixed(0)}%`
+                        : '') +
                       ` | URLs: ${report.url_count || 0} | Attachments: ${report.attach_count || 0}`
                     )}
                   </p>
+                </div>
+              )}
+
+              {/* ── AI Threat Assessment ── */}
+              {report?.narrative && report.narrative.enabled && (
+                <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                    <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>AI Threat Assessment</h3>
+                    <span style={{ marginLeft: 'auto', padding: '0.15rem 0.5rem', borderRadius: 4, background: 'rgba(139,92,246,0.15)', color: '#A78BFA', fontSize: '0.625rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                      {report.narrative.model || 'gpt-4o-mini'}
+                    </span>
+                  </div>
+
+                  {report.narrative.threat_assessment && (
+                    <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', marginBottom: '1rem', borderLeft: '3px solid #A78BFA' }}>
+                      <p style={{ color: 'var(--text)', fontSize: '0.875rem', lineHeight: 1.7, margin: 0 }}>
+                        {report.narrative.threat_assessment}
+                      </p>
+                    </div>
+                  )}
+
+                  {report.narrative.social_engineering_tactics?.length > 0 && (
+                    <div style={{ marginBottom: '1rem' }}>
+                      <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Social Engineering Tactics</p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {report.narrative.social_engineering_tactics.map((tactic, i) => (
+                          <span key={i} style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'rgba(239,68,68,0.12)', color: '#EF4444', fontSize: '0.75rem', fontWeight: 500 }}>
+                            {tactic}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(report.narrative.spf_assessment || report.narrative.dkim_assessment || report.narrative.dmarc_assessment) && (
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0.75rem' }}>
+                      {[
+                        ['SPF', report.narrative.spf_assessment],
+                        ['DKIM', report.narrative.dkim_assessment],
+                        ['DMARC', report.narrative.dmarc_assessment],
+                      ].filter(([, v]) => v).map(([auth, text]) => (
+                        <div key={auth} style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.875rem' }}>
+                          <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.375rem', fontWeight: 700 }}>{auth}</p>
+                          <p style={{ color: '#9CA3AF', fontSize: '0.8125rem', lineHeight: 1.5, margin: 0 }}>{text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {report.narrative.additional_iocs?.length > 0 && (
+                    <div style={{ marginTop: '1rem' }}>
+                      <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Additional IOCs</p>
+                      <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                        {report.narrative.additional_iocs.map((ioc, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ color: '#F59E0B', fontSize: '0.75rem', fontWeight: 700 }}>+ </span>
+                            <span style={{ color: '#9CA3AF', fontSize: '0.8125rem' }}>{ioc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {report?.narrative && !report.narrative.enabled && (
+                <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>AI Threat Assessment</h3>
+                  </div>
+                  <p style={{ color: '#64748B', fontSize: '0.8125rem', lineHeight: 1.5 }}>
+                    Set <code style={{ background: 'var(--surface)', padding: '0.1rem 0.35rem', borderRadius: 3, fontSize: '0.75rem', color: '#06B6D4' }}>OPENAI_API_KEY</code> in your backend <code style={{ background: 'var(--surface)', padding: '0.1rem 0.35rem', borderRadius: 3, fontSize: '0.75rem', color: '#06B6D4' }}>.env</code> to enable AI-powered narrative threat analysis with social engineering insight.
+                  </p>
+                </div>
+              )}
+
+              {/* ML Signal Breakdown */}
+              {report && (report.ml_analysis || report.semantic_analysis) && (
+                <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
+                  <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Detection Signals</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+
+                    {/* XGBoost structural */}
+                    {report.ml_analysis && (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                          <span style={{ color: 'var(--sub)', fontSize: '0.8125rem' }}>
+                            XGBoost (structural features)
+                            <span style={{ color: 'var(--sub)', fontSize: '0.6875rem', marginLeft: '0.5rem' }}>
+                              {report.semantic_analysis?.method === 'distilbert' ? '25% weight' : '35% weight'}
+                            </span>
+                          </span>
+                          <span style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 600 }}>
+                            {((report.ml_analysis.phishing_probability ?? 0) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div style={{ height: 6, borderRadius: 3, background: 'var(--surface)', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', borderRadius: 3, width: `${(report.ml_analysis.phishing_probability ?? 0) * 100}%`, background: 'var(--cyan)', transition: 'width 0.4s' }} />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Semantic NLP */}
+                    {report.semantic_analysis && (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                          <span style={{ color: 'var(--sub)', fontSize: '0.8125rem' }}>
+                            {report.semantic_analysis.method === 'distilbert'
+                              ? 'DistilBERT (semantic NLP)'
+                              : 'Semantic NLP'}
+                            <span style={{ color: 'var(--sub)', fontSize: '0.6875rem', marginLeft: '0.5rem' }}>
+                              {report.semantic_analysis.method === 'distilbert' ? '15% weight' : 'unavailable'}
+                            </span>
+                          </span>
+                          <span style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 600 }}>
+                            {report.semantic_analysis.method === 'distilbert'
+                              ? `${((report.semantic_analysis.semantic_prob ?? 0) * 100).toFixed(1)}%`
+                              : '—'}
+                          </span>
+                        </div>
+                        <div style={{ height: 6, borderRadius: 3, background: 'var(--surface)', overflow: 'hidden' }}>
+                          <div style={{
+                            height: '100%', borderRadius: 3,
+                            width: report.semantic_analysis.method === 'distilbert' ? `${(report.semantic_analysis.semantic_prob ?? 0) * 100}%` : '0%',
+                            background: 'var(--purple)', transition: 'width 0.4s',
+                          }} />
+                        </div>
+                        {report.semantic_analysis.method === 'unavailable' && (
+                          <p style={{ color: 'var(--sub)', fontSize: '0.6875rem', marginTop: '0.25rem' }}>
+                            Run ml/fine_tune.py to enable semantic detection
+                          </p>
+                        )}
+                        {report.semantic_analysis.top_tokens?.length > 0 && (
+                          <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                            {report.semantic_analysis.top_tokens.map((t, i) => (
+                              <span key={i} style={{ padding: '0.125rem 0.5rem', borderRadius: 4, background: 'rgba(139,92,246,0.15)', color: 'var(--purple)', fontSize: '0.6875rem', fontWeight: 500 }}>
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                  </div>
                 </div>
               )}
 
@@ -444,14 +724,20 @@ export default function Report() {
                   <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>
                     Indicators of Compromise ({report.iocs.length})
                   </h3>
-                  <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {report.iocs.map((ioc, i) => {
                       const iocObj = typeof ioc === 'string' ? { value: ioc, type: 'ioc' } : ioc
+                      const status = getIOCStatus(iocObj)
                       return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.6875rem', color: '#06B6D4', fontWeight: 600, textTransform: 'uppercase', minWidth: 50, marginTop: '0.1rem' }}>
-                            {iocObj.type || 'ioc'}
-                          </span>
+                        <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', minWidth: 84 }}>
+                            <span style={{ fontSize: '0.6875rem', color: '#06B6D4', fontWeight: 600, textTransform: 'uppercase' }}>
+                              {iocObj.type || 'ioc'}
+                            </span>
+                            <span style={{ padding: '0.18rem 0.5rem', borderRadius: 9999, background: getColor(status) + '22', color: getColor(status), fontSize: '0.6875rem', fontWeight: 700, textTransform: 'capitalize', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 72 }}>
+                              {status}
+                            </span>
+                          </div>
                           <span style={{ color: '#9CA3AF', fontSize: '0.8125rem', fontFamily: 'monospace', wordBreak: 'break-all' }}>
                             {iocObj.value || ioc}
                           </span>
@@ -469,7 +755,6 @@ export default function Report() {
                   {report.threat_intel.header_deep_dive && (
                     <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                        <span style={{ fontSize: '1rem' }}>📧</span>
                         <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>Email Header Deep-Dive</h3>
                         {report.threat_intel.header_deep_dive.severity && (
                           <span style={{
@@ -486,7 +771,7 @@ export default function Report() {
                       {report.threat_intel.header_deep_dive.summary && (
                         <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
                           <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Sender Authenticity</p>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '90px' : '120px'}, 1fr))`, gap: '0.75rem' }}>
                             {[['SPF', report.threat_intel.header_deep_dive.summary.spf], ['DKIM', report.threat_intel.header_deep_dive.summary.dkim], ['DMARC', report.threat_intel.header_deep_dive.summary.dmarc]].map(([auth, val]) => (
                               <div key={auth} style={{ textAlign: 'center', padding: '0.5rem', background: 'var(--card)', borderRadius: 6 }}>
                                 <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '0.25rem' }}>{auth}</p>
@@ -494,7 +779,7 @@ export default function Report() {
                               </div>
                             ))}
                           </div>
-                          <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                          <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0.5rem', fontSize: '0.8125rem' }}>
                             <div><span style={{ color: '#64748B' }}>From: </span><span style={{ color: '#9CA3AF', fontFamily: 'monospace' }}>{report.threat_intel.header_deep_dive.summary.from || '—'}</span></div>
                             <div><span style={{ color: '#64748B' }}>Reply-To: </span><span style={{ color: '#9CA3AF', fontFamily: 'monospace' }}>{report.threat_intel.header_deep_dive.summary.reply_to || '—'}</span></div>
                             <div><span style={{ color: '#64748B' }}>Return-Path: </span><span style={{ color: '#9CA3AF', fontFamily: 'monospace' }}>{report.threat_intel.header_deep_dive.summary.return_path || '—'}</span></div>
@@ -524,11 +809,10 @@ export default function Report() {
                   {report.threat_intel.enrichment?.ip_reputation && (
                     <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                        <span style={{ fontSize: '1rem' }}>🌐</span>
                         <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>Sender Reputation</h3>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '1rem' }}>
                         {/* AbuseIPDB */}
                         {report.threat_intel.enrichment.ip_reputation.abuseipdb && report.threat_intel.enrichment.ip_reputation.abuseipdb.available && (
                           <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem' }}>
@@ -599,7 +883,6 @@ export default function Report() {
                   {report.threat_intel.enrichment?.urls?.length > 0 && (
                     <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                        <span style={{ fontSize: '1rem' }}>🔗</span>
                         <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>URL Threat Feed Check</h3>
                         {report.threat_intel.enrichment.available?.length > 0 && (
                           <span style={{ marginLeft: 'auto', fontSize: '0.6875rem', color: '#64748B' }}>
@@ -643,7 +926,7 @@ export default function Report() {
                       <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>
                         Live Threat Intelligence Services
                       </h3>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: '0.75rem' }}>
                         {[
                           ['VirusTotal', report.threat_intel.enrichment.available.includes('VirusTotal')],
                           ['AbuseIPDB', report.threat_intel.enrichment.available.includes('AbuseIPDB')],
@@ -666,7 +949,6 @@ export default function Report() {
               {(report?.attachment_analysis?.attachments?.length > 0 || report?.attachments?.length > 0) && (
                 <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                    <span style={{ fontSize: '1rem' }}>📎</span>
                     <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>Attachment Sandbox Preview</h3>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -713,7 +995,7 @@ export default function Report() {
 
                             {/* VirusTotal + Hybrid Analysis results */}
                             {(info.virustotal?.available || info.hybrid_analysis?.available) && (
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0.75rem' }}>
                                 {info.virustotal?.available && (
                                   <div style={{ background: 'var(--card)', borderRadius: 6, padding: '0.75rem' }}>
                                     <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>VirusTotal</p>

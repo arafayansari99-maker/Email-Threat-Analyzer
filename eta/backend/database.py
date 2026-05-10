@@ -1,8 +1,11 @@
-from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Boolean, JSON, Text, Index
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Boolean, JSON, Text, Index, event, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 from pathlib import Path
 import os
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB_PATH = BASE_DIR / "eta.db"
@@ -12,21 +15,41 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH.as_posix()
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+_is_sqlite = "sqlite" in DATABASE_URL
+connect_args = {"check_same_thread": False} if _is_sqlite else {}
 
-# Connection pool settings for better scalability
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    pool_size=10,           # Max connections
-    max_overflow=20,         # Extra connections under load
-    pool_timeout=30,          # Connection timeout
-)
+# SQLite uses StaticPool / NullPool — pool_size and max_overflow are PostgreSQL-only.
+if _is_sqlite:
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# WAL mode for SQLite: allows concurrent reads during writes (multi-worker safe)
+if _is_sqlite:
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, much faster than FULL
+        cur.execute("PRAGMA cache_size=-65536")   # 64 MB page cache
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.execute("PRAGMA foreign_keys=ON")     # enforce FK constraints
+        cur.close()
 
 
 class User(Base):
@@ -47,7 +70,7 @@ class ScanRecord(Base):
     __tablename__ = "scan_records"
     id           = Column(Integer, primary_key=True, index=True)
     scan_id      = Column(String(36), unique=True, index=True)
-    user_id      = Column(Integer, nullable=True, index=True)
+    user_id      = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     filename     = Column(String(255), nullable=True)
     sender       = Column(String(255), nullable=True)
     subject      = Column(String(500), nullable=True)
@@ -89,10 +112,12 @@ class DataSharing(Base):
 class PrivacySettings(Base):
     __tablename__ = "privacy_settings"
     id               = Column(Integer, primary_key=True, index=True)
-    user_id          = Column(Integer, unique=True, nullable=False, index=True)
+    user_id          = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     data_retention_days = Column(Integer, default=30)  # Auto-delete scans older than X days
     allow_analytics  = Column(Boolean, default=False)  # Opt-in analytics tracking
     auto_delete      = Column(Boolean, default=True)   # Enable auto-deletion
+    # Explicit consent required before any client data leaves this server (URLs/IPs/hashes → external APIs)
+    tier2_consent    = Column(Boolean, default=False)
     last_cleanup     = Column(DateTime, default=datetime.utcnow)
     created_at       = Column(DateTime, default=datetime.utcnow)
     updated_at       = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -287,6 +312,73 @@ class ModelFeedback(Base):
     reviewed      = Column(Boolean, default=False)
     reviewed_by   = Column(Integer, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class EmailAccount(Base):
+    """IMAP accounts connected by users for auto-fetch scanning."""
+    __tablename__ = "email_accounts"
+    id             = Column(Integer, primary_key=True, index=True)
+    user_id        = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    label          = Column(String(100), nullable=True)
+    email_address  = Column(String(255), nullable=False)
+    host           = Column(String(255), nullable=False)
+    port           = Column(Integer, default=993)
+    password_enc   = Column(Text, nullable=False)          # Fernet-encrypted
+    folder         = Column(String(100), default="INBOX")
+    fetch_limit    = Column(Integer, default=20)
+    is_active      = Column(Boolean, default=True)
+    last_synced_at = Column(DateTime, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    """Support chat messages between users and admins."""
+    __tablename__ = "chat_messages"
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    sender_role = Column(String(10), nullable=False)   # "user" or "admin"
+    sender_name = Column(String(100), nullable=True)
+    message     = Column(Text, nullable=False)
+    topic       = Column(String(50), nullable=True)
+    is_read     = Column(Boolean, default=False)
+    created_at  = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class Notification(Base):
+    """Per-user in-app notifications."""
+    __tablename__ = "notifications"
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    type       = Column(String(20), nullable=False)   # scan | message | settings | system
+    title      = Column(String(200), nullable=False)
+    body       = Column(String(500), nullable=True)
+    link       = Column(String(200), nullable=True)
+    is_read    = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+def run_migrations(engine_):
+    """Add any columns present in models but missing from the live SQLite schema."""
+    if "sqlite" not in str(engine_.url):
+        return  # PostgreSQL uses Alembic; skip here
+    import sqlite3
+    db_path = str(engine_.url).replace("sqlite:///", "")
+    conn = sqlite3.connect(db_path)
+    try:
+        pending = [
+            ("privacy_settings", "tier2_consent", "BOOLEAN DEFAULT 0"),
+            ("email_accounts", "label", "TEXT"),
+            ("email_accounts", "folder", "TEXT DEFAULT 'INBOX'"),
+            ("email_accounts", "fetch_limit", "INTEGER DEFAULT 20"),
+            ("email_accounts", "last_synced_at", "DATETIME"),
+        ]
+        for table, col, definition in pending:
+            existing = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if col not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+                conn.commit()
+    finally:
+        conn.close()
 
 
 def get_db():

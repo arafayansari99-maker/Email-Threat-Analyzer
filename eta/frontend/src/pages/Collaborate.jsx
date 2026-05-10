@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react'
 import api from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const ACTION_LABELS = {
-  workspace_created: { icon: '🏗️', text: 'created workspace', color: '#06B6D4' },
-  member_added: { icon: '👤', text: 'added a member', color: '#8B5CF6' },
-  comment_added: { icon: '💬', text: 'added a comment', color: '#10B981' },
-  scan_created: { icon: '🔍', text: 'ran a scan', color: '#F59E0B' },
-  user_approved: { icon: '✅', text: 'approved user', color: '#06B6D4' },
-  user_deleted: { icon: '🗑️', text: 'removed user', color: '#EF4444' },
-  role_changed: { icon: '🔄', text: 'changed user role', color: '#6366F1' },
+  workspace_created: { text: 'created workspace', color: '#06B6D4' },
+  member_added: { text: 'added a member', color: '#8B5CF6' },
+  comment_added: { text: 'added a comment', color: '#10B981' },
+  scan_created: { text: 'ran a scan', color: '#F59E0B' },
+  user_approved: { text: 'approved user', color: '#06B6D4' },
+  user_deleted: { text: 'removed user', color: '#EF4444' },
+  role_changed: { text: 'changed user role', color: '#6366F1' },
 }
 
 const timeAgo = (date) => {
@@ -23,16 +24,13 @@ const timeAgo = (date) => {
 }
 
 function ActivityFeedItem({ log }) {
-  const info = ACTION_LABELS[log.action] || { icon: '📌', text: log.action, color: '#64748B' }
+  const info = ACTION_LABELS[log.action] || { text: log.action, color: '#64748B' }
   return (
     <div style={{ display: 'flex', gap: '0.75rem', padding: '0.875rem', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }}>
       <div style={{
-        width: 36, height: 36, borderRadius: '50%', background: info.color + '18',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '1rem', flexShrink: 0,
-      }}>
-        {info.icon}
-      </div>
+        width: 8, height: 8, borderRadius: '50%', background: info.color,
+        flexShrink: 0, marginTop: 6,
+      }} />
       <div style={{ flex: 1 }}>
         <p style={{ color: 'var(--text)', fontSize: '0.8125rem', marginBottom: '0.125rem' }}>
           <strong style={{ color: '#06B6D4' }}>{log.username}</strong>{' '}
@@ -49,6 +47,7 @@ function ActivityFeedItem({ log }) {
 
 export default function Collaborate() {
   const { user } = useAuth()
+  const isMobile = useIsMobile()
   const [tab, setTab] = useState('workspaces')
   const [workspaces, setWorkspaces] = useState([])
   const [activity, setActivity] = useState([])
@@ -149,7 +148,7 @@ export default function Collaborate() {
   }
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Collaborate</h1>
@@ -197,7 +196,6 @@ export default function Collaborate() {
             <div style={{ color: '#64748B', textAlign: 'center', padding: '3rem' }}>Loading...</div>
           ) : workspaces.length === 0 ? (
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '3rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🏗️</div>
               <p style={{ color: '#64748B', marginBottom: '1rem' }}>No workspaces yet. Create one to start collaborating.</p>
               <button onClick={() => setShowCreate(true)} style={{
                 padding: '0.625rem 1.5rem', borderRadius: 8, background: '#06B6D4', color: 'var(--text)',
@@ -205,7 +203,7 @@ export default function Collaborate() {
               }}>Create Workspace</button>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? '260px' : '300px'}, 1fr))`, gap: '1rem' }}>
               {workspaces.map(ws => (
                 <div key={ws.id} style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -228,10 +226,10 @@ export default function Collaborate() {
 
           {/* Members Panel */}
           {selectedWs && (
-            <div style={{ marginTop: '1.5rem', background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div style={{ marginTop: '1.5rem', background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>{selectedWs.name} — Members</h3>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <select
                     value={addRole}
                     onChange={(e) => setAddRole(e.target.value)}
@@ -303,11 +301,10 @@ export default function Collaborate() {
             <div style={{ color: '#64748B', textAlign: 'center', padding: '3rem' }}>Loading...</div>
           ) : activity.length === 0 ? (
             <div style={{ padding: '3rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📋</div>
               <p style={{ color: '#64748B', fontSize: '0.875rem' }}>No activity yet. Create a workspace to start tracking.</p>
             </div>
           ) : (
-            <div style={{ maxHeight: 500, overflowY: 'auto' }}>
+            <div style={{ maxHeight: isMobile ? 300 : 500, overflowY: 'auto' }}>
               {activity.map(log => (
                 <ActivityFeedItem key={log.id} log={log} />
               ))}
@@ -322,7 +319,7 @@ export default function Collaborate() {
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000,
           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
         }} onClick={() => setShowCreate(false)}>
-          <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', width: '100%', maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem', width: '95vw', maxWidth: 440 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: '1.125rem', fontWeight: 600, marginBottom: '1.25rem' }}>Create Workspace</h2>
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Workspace Name *</label>

@@ -1,21 +1,50 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import api from '../services/api'
+import axios from 'axios'
+import api, { setToken } from '../services/api'
 import { getProfile } from '../services/api'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null)
+  const [user, setUser]       = useState(() => {
+    // Restore user profile from localStorage for instant render (no token, just display info).
+    // Guard against corrupt/oversized storage entries.
+    try {
+      const raw = localStorage.getItem('eta_user')
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      // Reject anything that isn't a plain user object
+      if (!parsed || typeof parsed !== 'object' || !parsed.id) return null
+      return parsed
+    } catch {
+      localStorage.removeItem('eta_user')
+      return null
+    }
+  })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // On page load there is no in-memory token (cleared by refresh).
+    // Try the httpOnly refresh-token cookie to silently re-issue an access token.
+    // Use raw axios (no interceptors) to avoid the 401 interceptor retrying refresh in a loop.
     const initAuth = async () => {
-      const token = localStorage.getItem('eta_token')
-      if (token) {
-        api.defaults.headers.common['Authorization'] = `Bearer ${token}`
-        await refreshUser()
+      try {
+        const { data } = await axios.post('/api/auth/refresh', {}, { withCredentials: true })
+        setToken(data.access_token)
+        // Fetch fresh profile to confirm identity
+        const { data: profile } = await getProfile()
+        localStorage.setItem('eta_user', JSON.stringify(profile))
+        setUser(profile)
+      } catch {
+        // No valid refresh token — clear stale user data and stay on current page.
+        // The 401 interceptor in api.js will redirect to /login if a protected
+        // endpoint is subsequently called.
+        setToken(null)
+        localStorage.removeItem('eta_user')
+        setUser(null)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
     initAuth()
   }, [])
@@ -27,38 +56,40 @@ export function AuthProvider({ children }) {
     const { data } = await api.post('/api/auth/login', formData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
-    _persist(data)
+
+    setToken(data.access_token)
+    try { localStorage.setItem('eta_user', JSON.stringify(data.user)) } catch { /* storage unavailable */ }
     setUser(data.user)
     return data.user
   }, [])
 
   const register = useCallback(async (username, email, password) => {
     const { data } = await api.post('/api/auth/register', { username, email, password })
-    _persist(data)
+    setToken(data.access_token)
+    try { localStorage.setItem('eta_user', JSON.stringify(data.user)) } catch { /* storage unavailable */ }
     setUser(data.user)
     return data.user
   }, [])
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('eta_token')
+  const logout = useCallback(async () => {
+    // Tell backend to revoke the refresh-token cookie
+    try { await api.post('/api/auth/logout') } catch { /* ignore if already expired */ }
+    setToken(null)
     localStorage.removeItem('eta_user')
-    delete api.defaults.headers.common['Authorization']
     setUser(null)
   }, [])
 
   const refreshUser = useCallback(async () => {
     try {
       const { data } = await getProfile()
-      localStorage.setItem('eta_user', JSON.stringify(data))
+      try { localStorage.setItem('eta_user', JSON.stringify(data)) } catch { /* storage unavailable */ }
       setUser(data)
       return data
-    } catch (err) {
-      console.error('Failed to refresh user:', err)
+    } catch {
       logout()
     }
   }, [logout])
 
-  // Sync user state from already-stored data — used by Login.jsx after manual token storage
   const syncUser = useCallback((userData) => {
     setUser(userData)
   }, [])
@@ -68,12 +99,6 @@ export function AuthProvider({ children }) {
       {children}
     </AuthContext.Provider>
   )
-}
-
-function _persist(data) {
-  localStorage.setItem('eta_token', data.access_token)
-  localStorage.setItem('eta_user', JSON.stringify(data.user))
-  api.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`
 }
 
 export function useAuth() {

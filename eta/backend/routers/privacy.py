@@ -19,22 +19,24 @@ def update_privacy_settings(
     data_retention_days: int = Query(30, ge=1, le=365),
     allow_analytics: bool = Query(False),
     auto_delete: bool = Query(True),
+    tier2_consent: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Update user privacy settings"""
     ps = db.query(PrivacySettings).filter(PrivacySettings.user_id == current_user.id).first()
-    
+
     if not ps:
         ps = PrivacySettings(user_id=current_user.id)
         db.add(ps)
-    
+
     ps.data_retention_days = data_retention_days
     ps.allow_analytics = allow_analytics
     ps.auto_delete = auto_delete
+    ps.tier2_consent = tier2_consent
     ps.updated_at = datetime.utcnow()
     db.commit()
-    
+
     return {
         "ok": True,
         "message": "Privacy settings updated",
@@ -42,6 +44,7 @@ def update_privacy_settings(
             "data_retention_days": ps.data_retention_days,
             "allow_analytics": ps.allow_analytics,
             "auto_delete": ps.auto_delete,
+            "tier2_consent": ps.tier2_consent,
         }
     }
 
@@ -63,6 +66,7 @@ def get_privacy_settings(
         "data_retention_days": ps.data_retention_days,
         "allow_analytics": ps.allow_analytics,
         "auto_delete": ps.auto_delete,
+        "tier2_consent": ps.tier2_consent,
         "last_cleanup": ps.last_cleanup.isoformat() if ps.last_cleanup else None,
     }
 

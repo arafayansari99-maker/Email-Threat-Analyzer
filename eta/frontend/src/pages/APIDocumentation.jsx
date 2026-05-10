@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const API_SECTIONS = [
   {
@@ -173,6 +174,7 @@ const API_SECTIONS = [
 ]
 
 export default function APIDocumentation() {
+  const isMobile = useIsMobile()
   const [activeSection, setActiveSection] = useState('auth')
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -196,11 +198,11 @@ export default function APIDocumentation() {
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)', flexDirection: isMobile ? 'column' : 'row' }}>
       {/* Sidebar */}
       <aside style={{
-        width: 240, flexShrink: 0, borderRight: '1px solid var(--border)',
-        background: 'var(--surface)', padding: '1.5rem', position: 'sticky', top: 0, height: '100vh',
+        width: isMobile ? '100%' : 240, flexShrink: 0, borderRight: '1px solid var(--border)',
+        background: 'var(--surface)', padding: '1.5rem', position: isMobile ? 'static' : 'sticky', top: 0, height: isMobile ? 'auto' : '100vh',
       }}>
         <Link to="/dashboard" style={{ color: 'var(--cyan)', textDecoration: 'none', fontSize: '0.875rem' }}>
           ← Back to Dashboard
@@ -241,7 +243,7 @@ export default function APIDocumentation() {
       </aside>
 
       {/* Main Content */}
-      <main style={{ flex: 1, padding: '2rem', overflowY: 'auto' }}>
+      <main style={{ flex: 1, padding: isMobile ? '1rem' : '2rem', overflowY: 'auto' }}>
         {filteredSections.map(section => (
           <div key={section.id} style={{ marginBottom: '2.5rem' }} id={section.id}>
             <h3 style={{ color: 'var(--text)', fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>
@@ -268,6 +270,7 @@ export default function APIDocumentation() {
                     <code style={{
                       color: 'var(--text)', fontSize: '0.9375rem',
                       fontFamily: 'monospace', fontWeight: 500,
+                      overflowX: 'auto', display: 'block',
                     }}>
                       {endpoint.path}
                     </code>
@@ -275,7 +278,7 @@ export default function APIDocumentation() {
                   <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', marginBottom: '0.5rem' }}>
                     {endpoint.description}
                   </p>
-                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.75rem' }}>
+                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.75rem', flexWrap: 'wrap' }}>
                     {endpoint.params !== '-' && (
                       <span>
                         <span style={{ color: 'var(--sub)' }}>Params: </span>

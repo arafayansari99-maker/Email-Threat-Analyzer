@@ -208,7 +208,23 @@ const THREAT_ADVISORIES = [
   },
 ]
 
-const ITEMS_PER_PAGE = 3
+const ITEMS_PER_PAGE_DESKTOP = 3
+const ITEMS_PER_PAGE_MOBILE  = 1
+
+// Rotate the article list daily so featured articles feel fresh each day.
+// Uses the date string as a seed to deterministically shuffle.
+function getDailyArticles() {
+  const seed = new Date().toDateString()
+  let hash = 0
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0
+  const shuffled = [...FEATURED_ARTICLES]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    hash = (hash * 1664525 + 1013904223) | 0
+    const j = Math.abs(hash) % (i + 1);
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  return shuffled
+}
 
 export default function News() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -218,13 +234,45 @@ export default function News() {
   const [hoveredArticle, setHoveredArticle] = useState(null)
   const [hoveredSource, setHoveredSource] = useState(null)
   const [hoveredAdv, setHoveredAdv] = useState(null)
+  const [articleList, setArticleList] = useState(getDailyArticles)
+  const [advIndex, setAdvIndex] = useState(0)
+  const [advAnimState, setAdvAnimState] = useState('idle')
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
   const carouselRef = useRef(null)
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  // Refresh article order at midnight (next calendar day)
+  useEffect(() => {
+    const msUntilMidnight = () => {
+      const now = new Date()
+      const midnight = new Date(now)
+      midnight.setHours(24, 0, 0, 0)
+      return midnight - now
+    }
+    const scheduleRefresh = () => {
+      const t = setTimeout(() => {
+        setArticleList(getDailyArticles())
+        setCurrentIndex(0)
+        scheduleRefresh()
+      }, msUntilMidnight())
+      return t
+    }
+    const t = scheduleRefresh()
+    return () => clearTimeout(t)
+  }, [])
 
   // Trusted sources carousel state
   const sourcesPerSlide = 8
   const [sourceSlide, setSourceSlide] = useState(0)
+  const [sourceMobileIndex, setSourceMobileIndex] = useState(0)
+  const [sourceMobileAnim, setSourceMobileAnim] = useState('idle')
 
-  const filteredArticles = FEATURED_ARTICLES.filter(article => {
+  const filteredArticles = articleList.filter(article => {
     const matchesSearch = article.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       article.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       article.source.toLowerCase().includes(searchQuery.toLowerCase())
@@ -258,12 +306,29 @@ export default function News() {
     }, 150)
   }
 
-  // Auto-rotate sources every 6 seconds
+  // Auto-rotate sources every 6 seconds (desktop)
   useEffect(() => {
-    if (totalSourceSlides <= 1) return
+    if (isMobile || totalSourceSlides <= 1) return
     const interval = setInterval(nextSourceSlide, 6000)
     return () => clearInterval(interval)
-  }, [totalSourceSlides])
+  }, [totalSourceSlides, isMobile])
+
+  // Mobile source slider auto-rotate every 3 seconds
+  const sourceMobileNext = useCallback(() => {
+    if (sourceMobileAnim !== 'idle') return
+    setSourceMobileAnim('out')
+    setTimeout(() => {
+      setSourceMobileIndex(i => (i + 1) % filteredSources.length)
+      setSourceMobileAnim('in')
+      setTimeout(() => setSourceMobileAnim('idle'), 300)
+    }, 150)
+  }, [sourceMobileAnim, filteredSources.length])
+
+  useEffect(() => {
+    if (!isMobile || filteredSources.length <= 1) return
+    const interval = setInterval(sourceMobileNext, 3000)
+    return () => clearInterval(interval)
+  }, [isMobile, sourceMobileNext, filteredSources.length])
 
   const filteredAdvisories = THREAT_ADVISORIES.filter(adv => {
     const matchesSearch = adv.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -277,12 +342,17 @@ export default function News() {
     return acc
   }, {})
 
-  const totalPages = Math.ceil(filteredArticles.length / ITEMS_PER_PAGE)
-  const currentPage = Math.floor(currentIndex / ITEMS_PER_PAGE)
+  const itemsPerPage = isMobile ? ITEMS_PER_PAGE_MOBILE : ITEMS_PER_PAGE_DESKTOP
+
+  // Reset to first page when itemsPerPage changes (screen resize)
+  useEffect(() => { setCurrentIndex(0) }, [itemsPerPage])
+
+  const totalPages = Math.ceil(filteredArticles.length / itemsPerPage)
+  const currentPage = Math.floor(currentIndex / itemsPerPage)
 
   const getCurrentArticles = () => {
     const start = currentIndex
-    const end = start + ITEMS_PER_PAGE
+    const end = start + itemsPerPage
     return filteredArticles.slice(start, end)
   }
 
@@ -292,13 +362,13 @@ export default function News() {
     setAnimState('out')
     setTimeout(() => {
       setCurrentIndex(prev => {
-        const next = prev + ITEMS_PER_PAGE
+        const next = prev + itemsPerPage
         return next >= filteredArticles.length ? 0 : next
       })
       setAnimState('in')
       setTimeout(() => setAnimState('idle'), 350)
     }, 200)
-  }, [filteredArticles.length])
+  }, [filteredArticles.length, itemsPerPage])
 
   const goPrev = useCallback(() => {
     if (animState !== 'idle') return
@@ -306,17 +376,17 @@ export default function News() {
     setAnimState('out')
     setTimeout(() => {
       setCurrentIndex(prev => {
-        const prevIndex = prev - ITEMS_PER_PAGE
-        return prevIndex < 0 ? Math.floor((filteredArticles.length - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE : prevIndex
+        const prevIndex = prev - itemsPerPage
+        return prevIndex < 0 ? Math.floor((filteredArticles.length - 1) / itemsPerPage) * itemsPerPage : prevIndex
       })
       setAnimState('in')
       setTimeout(() => setAnimState('idle'), 350)
     }, 200)
-  }, [filteredArticles.length])
+  }, [filteredArticles.length, itemsPerPage])
 
   const goToPage = (pageIndex) => {
     if (animState !== 'idle') return
-    const newIndex = pageIndex * ITEMS_PER_PAGE
+    const newIndex = pageIndex * itemsPerPage
     if (newIndex !== currentIndex) {
       setAnimDirection(newIndex > currentIndex ? 'next' : 'prev')
       setAnimState('out')
@@ -328,14 +398,32 @@ export default function News() {
     }
   }
 
-  // Auto-advance every 5 seconds
+  // Auto-advance articles every 5 seconds
   useEffect(() => {
     const interval = setInterval(goNext, 5000)
     return () => clearInterval(interval)
   }, [goNext])
 
+  // Advisory slider helpers (mobile only)
+  const advGoNext = useCallback(() => {
+    if (advAnimState !== 'idle') return
+    setAdvAnimState('out')
+    setTimeout(() => {
+      setAdvIndex(i => (i + 1) % filteredAdvisories.length)
+      setAdvAnimState('in')
+      setTimeout(() => setAdvAnimState('idle'), 300)
+    }, 150)
+  }, [advAnimState, filteredAdvisories.length])
+
+  // Auto-rotate advisories every 3 seconds on mobile
+  useEffect(() => {
+    if (!isMobile || filteredAdvisories.length <= 1) return
+    const interval = setInterval(advGoNext, 3000)
+    return () => clearInterval(interval)
+  }, [isMobile, advGoNext, filteredAdvisories.length])
+
   return (
-    <div style={{ padding: '1.5rem', maxWidth: 1400, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem', maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
       <div style={{ marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
@@ -397,13 +485,13 @@ export default function News() {
         </div>
 
         {/* Articles Card */}
-        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem' }}>
+        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '0.875rem' : '1.5rem' }}>
           {/* Articles Grid */}
           <div
             ref={carouselRef}
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
               gap: '1rem',
               animation: animState === 'out'
                 ? (animDirection === 'next' ? 'slideOutLeft 0.2s ease-in forwards' : 'slideOutRight 0.2s ease-in forwards')
@@ -458,13 +546,21 @@ export default function News() {
           </button>
 
           {/* Page Indicators - Center */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             {Array.from({ length: totalPages }).map((_, i) => (
-              <button key={i} onClick={() => goToPage(i)} disabled={animState !== 'idle'} style={{
-                width: i === currentPage ? 20 : 8, height: 8, borderRadius: 4,
-                background: i === currentPage ? 'var(--cyan)' : 'var(--border)',
-                border: 'none', cursor: 'pointer', transition: 'all 0.2s ease',
-              }} />
+              <div
+                key={i}
+                onClick={() => animState === 'idle' && goToPage(i)}
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: i === currentPage ? 'var(--cyan)' : 'rgba(255,255,255,0.25)',
+                  cursor: animState !== 'idle' ? 'default' : 'pointer',
+                  transition: 'background 0.25s ease',
+                  flexShrink: 0,
+                }}
+              />
             ))}
           </div>
 
@@ -494,77 +590,133 @@ export default function News() {
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem' }}>
           {filteredSources.length === 0 ? (
             <p style={{ color: 'var(--sub)', textAlign: 'center', padding: '2rem' }}>No sources found</p>
-          ) : (
+          ) : isMobile ? (
+            /* Mobile: single-card slider */
             <div>
-              {/* Carousel Grid */}
               <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '1rem',
-                animation: animState === 'slideOut' ? (animDirection === 'next' ? 'slideOutLeft 0.2s forwards' : 'slideOutRight 0.2s forwards') :
-                         animState === 'slideIn' ? (animDirection === 'next' ? 'slideInRight 0.35s forwards' : 'slideInLeft 0.35s forwards') : 'none',
+                animation: sourceMobileAnim === 'out' ? 'slideOutLeft 0.15s ease-in forwards'
+                         : sourceMobileAnim === 'in'  ? 'slideInRight 0.3s ease-out forwards'
+                         : 'none',
               }}>
-                <style>{animationStyles}</style>
-                {currentSources.map((source, i) => (
-                  <a key={i} href={source.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>
-                    <div style={{
-                      background: 'var(--surface)', borderRadius: 10, padding: '1.125rem',
-                      border: '1px solid var(--border)', height: '100%',
-                      transition: 'all 0.2s ease', cursor: 'pointer',
-                    }}>
+                {(() => {
+                  const source = filteredSources[sourceMobileIndex]
+                  return (
+                    <a href={source.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>
                       <div style={{
-                        padding: '0.125rem 0.5rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 600,
-                        background: 'rgba(6,182,212,0.15)', color: 'var(--cyan)',
-                        textTransform: 'uppercase', letterSpacing: '0.025em', display: 'inline-block', marginBottom: '0.5rem'
+                        background: 'var(--surface)', borderRadius: 10, padding: '1.125rem',
+                        border: '1px solid var(--border)', cursor: 'pointer',
                       }}>
-                        {source.category}
+                        <div style={{
+                          padding: '0.125rem 0.5rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 600,
+                          background: 'rgba(6,182,212,0.15)', color: 'var(--cyan)',
+                          textTransform: 'uppercase', letterSpacing: '0.025em', display: 'inline-block', marginBottom: '0.5rem'
+                        }}>
+                          {source.category}
+                        </div>
+                        <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.375rem', lineHeight: 1.4 }}>
+                          {source.name}
+                        </h3>
+                        <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', lineHeight: 1.5, marginBottom: '0.625rem' }}>
+                          {source.desc}
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.75rem' }}>
+                          <span style={{ color: 'var(--cyan)', fontWeight: 500 }}>Visit →</span>
+                        </div>
                       </div>
-                      <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.375rem', lineHeight: 1.4 }}>
-                        {source.name}
-                      </h3>
-                      <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', lineHeight: 1.5, marginBottom: '0.625rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                        {source.desc}
-                      </p>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', justifyContent: 'flex-end' }}>
-                        <span style={{ color: 'var(--cyan)', fontWeight: 500 }}>Visit →</span>
-                      </div>
-                    </div>
-                  </a>
+                    </a>
+                  )
+                })()}
+              </div>
+              {/* Dot indicators */}
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '0.4rem', marginTop: '1rem' }}>
+                {filteredSources.map((_, i) => (
+                  <div
+                    key={i}
+                    onClick={() => {
+                      if (sourceMobileAnim !== 'idle') return
+                      setSourceMobileAnim('out')
+                      setTimeout(() => { setSourceMobileIndex(i); setSourceMobileAnim('in'); setTimeout(() => setSourceMobileAnim('idle'), 300) }, 150)
+                    }}
+                    style={{
+                      width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                      background: i === sourceMobileIndex ? 'var(--cyan)' : 'rgba(255,255,255,0.25)',
+                      cursor: 'pointer', transition: 'background 0.25s ease',
+                    }}
+                  />
                 ))}
               </div>
             </div>
+          ) : (
+            /* Desktop: 4-column paged grid */
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '1rem',
+              animation: animState === 'slideOut' ? (animDirection === 'next' ? 'slideOutLeft 0.2s forwards' : 'slideOutRight 0.2s forwards') :
+                       animState === 'slideIn' ? (animDirection === 'next' ? 'slideInRight 0.35s forwards' : 'slideInLeft 0.35s forwards') : 'none',
+            }}>
+              <style>{animationStyles}</style>
+              {currentSources.map((source, i) => (
+                <a key={i} href={source.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>
+                  <div style={{
+                    background: 'var(--surface)', borderRadius: 10, padding: '1.125rem',
+                    border: '1px solid var(--border)', height: '100%',
+                    transition: 'all 0.2s ease', cursor: 'pointer',
+                  }}>
+                    <div style={{
+                      padding: '0.125rem 0.5rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 600,
+                      background: 'rgba(6,182,212,0.15)', color: 'var(--cyan)',
+                      textTransform: 'uppercase', letterSpacing: '0.025em', display: 'inline-block', marginBottom: '0.5rem'
+                    }}>
+                      {source.category}
+                    </div>
+                    <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.375rem', lineHeight: 1.4 }}>
+                      {source.name}
+                    </h3>
+                    <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', lineHeight: 1.5, marginBottom: '0.625rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {source.desc}
+                    </p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', justifyContent: 'flex-end' }}>
+                      <span style={{ color: 'var(--cyan)', fontWeight: 500 }}>Visit →</span>
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
           )}
         </div>
-        {/* Carousel Navigation - Outside Section */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1.25rem', padding: '0 0.5rem' }}>
-          <button onClick={prevSourceSlide} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 36, height: 36, borderRadius: '50%', border: '1px solid var(--border)',
-            background: 'var(--surface)', cursor: 'pointer', transition: 'all 0.15s ease',
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text)" strokeWidth="2">
-              <polyline points="15 18 9 12 15 6"/>
-            </svg>
-          </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {Array.from({ length: totalSourceSlides }).map((_, i) => (
-              <div key={i} onClick={() => { setAnimDirection(i > sourceSlide ? 'next' : 'prev'); setAnimState('slideOut'); setTimeout(() => { setSourceSlide(i); setAnimState('slideIn'); }, 150) }} style={{
-                width: 8, height: 8, borderRadius: '50%', cursor: 'pointer',
-                background: i === sourceSlide ? 'var(--cyan)' : 'var(--border)',
-                transition: 'all 0.2s ease',
-              }} />
-            ))}
+        {/* Desktop navigation controls only */}
+        {!isMobile && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1.25rem', padding: '0 0.5rem' }}>
+            <button onClick={prevSourceSlide} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, borderRadius: '50%', border: '1px solid var(--border)',
+              background: 'var(--surface)', cursor: 'pointer', transition: 'all 0.15s ease',
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text)" strokeWidth="2">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {Array.from({ length: totalSourceSlides }).map((_, i) => (
+                <div key={i} onClick={() => { setAnimDirection(i > sourceSlide ? 'next' : 'prev'); setAnimState('slideOut'); setTimeout(() => { setSourceSlide(i); setAnimState('slideIn'); }, 150) }} style={{
+                  width: 6, height: 6, borderRadius: '50%', cursor: 'pointer',
+                  background: i === sourceSlide ? 'var(--cyan)' : 'var(--border)',
+                  transition: 'all 0.2s ease',
+                }} />
+              ))}
+            </div>
+            <button onClick={nextSourceSlide} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, borderRadius: '50%', border: '1px solid var(--border)',
+              background: 'var(--surface)', cursor: 'pointer', transition: 'all 0.15s ease',
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text)" strokeWidth="2">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
           </div>
-          <button onClick={nextSourceSlide} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 36, height: 36, borderRadius: '50%', border: '1px solid var(--border)',
-            background: 'var(--surface)', cursor: 'pointer', transition: 'all 0.15s ease',
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text)" strokeWidth="2">
-              <polyline points="9 18 15 12 9 6"/>
-            </svg>
-          </button>
-        </div>
+        )}
       </section>
 
       {/* Section 3: Threat Advisories */}
@@ -581,19 +733,75 @@ export default function News() {
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem' }}>
           {filteredAdvisories.length === 0 ? (
             <p style={{ color: 'var(--sub)', textAlign: 'center', padding: '2rem' }}>No advisories found</p>
+          ) : isMobile ? (
+            /* Mobile: single-card slider */
+            <div>
+              <div style={{
+                animation: advAnimState === 'out' ? 'slideOutLeft 0.15s ease-in forwards'
+                         : advAnimState === 'in'  ? 'slideInRight 0.3s ease-out forwards'
+                         : 'none',
+              }}>
+                {(() => {
+                  const adv = filteredAdvisories[advIndex]
+                  return (
+                    <a href={adv.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>
+                      <div style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '0.875rem',
+                        padding: '1rem', borderRadius: 10, background: adv.color + '08', border: `1px solid ${adv.color}25`,
+                        cursor: 'pointer',
+                      }}>
+                        <div style={{
+                          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                          background: adv.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                            <line x1="12" y1="9" x2="12" y2="13"/>
+                            <line x1="12" y1="17" x2="12.01" y2="17"/>
+                          </svg>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.375rem', marginBottom: '0.375rem' }}>
+                            <span style={{
+                              padding: '0.125rem 0.5rem', borderRadius: 4, fontSize: '0.6875rem', fontWeight: 600,
+                              background: adv.color, color: '#fff', textTransform: 'uppercase', flexShrink: 0,
+                            }}>
+                              {adv.severity}
+                            </span>
+                            <span style={{ color: 'var(--sub)', fontSize: '0.75rem' }}>{adv.source}</span>
+                            <span style={{ color: 'var(--sub)', fontSize: '0.75rem' }}>· {adv.date}</span>
+                          </div>
+                          <p style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 500, lineHeight: 1.4 }}>{adv.title}</p>
+                        </div>
+                      </div>
+                    </a>
+                  )
+                })()}
+              </div>
+              {/* Dot indicators */}
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '0.4rem', marginTop: '1rem' }}>
+                {filteredAdvisories.map((_, i) => (
+                  <div
+                    key={i}
+                    onClick={() => { if (advAnimState === 'idle') { setAdvAnimState('out'); setTimeout(() => { setAdvIndex(i); setAdvAnimState('in'); setTimeout(() => setAdvAnimState('idle'), 300) }, 150) } }}
+                    style={{
+                      width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                      background: i === advIndex ? 'var(--cyan)' : 'rgba(255,255,255,0.25)',
+                      cursor: 'pointer', transition: 'background 0.25s ease',
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
           ) : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: '0.75rem',
-            }}>
+            /* Desktop: 4-column grid */
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
               {filteredAdvisories.map((adv, i) => (
                 <a key={i} href={adv.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
                   <div style={{
                     display: 'flex', alignItems: 'flex-start', gap: '0.875rem',
                     padding: '1rem', borderRadius: 10, background: adv.color + '08', border: `1px solid ${adv.color}25`,
-                    transition: 'all 0.15s ease', cursor: 'pointer',
-                    height: '100%',
+                    transition: 'all 0.15s ease', cursor: 'pointer', height: '100%',
                   }}>
                     <div style={{
                       width: 40, height: 40, borderRadius: 10,

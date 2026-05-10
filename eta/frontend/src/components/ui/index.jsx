@@ -1,5 +1,11 @@
 // Shared UI primitives
 
+// ── Verdict colour helpers — single source of truth used by all pages ─────────
+const VERDICT_COLOR  = { malicious: 'var(--red)', suspicious: 'var(--amber)', safe: '#10B981' }
+const VERDICT_BG     = { malicious: 'rgba(239,68,68,0.15)', suspicious: 'rgba(245,158,11,0.15)', safe: 'rgba(16,185,129,0.15)' }
+export const verdictColor  = v => VERDICT_COLOR[v]  || '#64748B'
+export const verdictBgColor = v => VERDICT_BG[v]    || 'rgba(100,116,139,0.15)'
+
 export function VerdictBadge({ verdict, size = 'sm' }) {
   const cfg = {
     malicious:  'text-red-400 bg-red-500/10 border-red-500/30',
@@ -87,8 +93,12 @@ export function Section({ title, children, action }) {
 export function Empty({ message, cta }) {
   return (
     <div className="flex flex-col items-center gap-3 py-14 text-center px-4">
-      <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl"
-           style={{background:'var(--muted)'}}>📭</div>
+      <div className="w-12 h-12 rounded-full flex items-center justify-center"
+           style={{background:'var(--muted)'}}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{color:'var(--sub)'}}>
+          <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-8 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+        </svg>
+      </div>
       <p className="text-sm" style={{color:'var(--sub)'}}>{message}</p>
       {cta}
     </div>
@@ -100,7 +110,7 @@ export function ErrorBanner({ message }) {
   return (
     <div className="p-3 rounded-xl text-sm text-red-400 flex items-start gap-2"
          style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.25)'}}>
-      <span className="flex-shrink-0 mt-0.5">⚠</span>
+      <span className="flex-shrink-0 mt-0.5" style={{fontWeight:700}}>!</span>
       <span>{message}</span>
     </div>
   )

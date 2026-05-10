@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import logging
 import json
 
-from database import get_db, ScanRecord, ThreatReport
+from database import get_db, ScanRecord, ThreatReport, PrivacySettings, Notification
 from analysis_engine import run_analysis
 from routers.auth import optional_user
 
@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 ALLOWED = {".eml", ".msg", ".txt", ".mbox", ".csv", ".pdf", ".json", ".xml", ".html", ".htm", ".log", ".md"}
 MAX_SIZE = 300 * 1024 * 1024  # 300 MB
 MIN_SIZE = 10  # 10 bytes minimum
+
+
+def _get_tier2_consent(db: Session, user_id: Optional[int]) -> bool:
+    """Return True only if the user has explicitly consented to external API enrichment."""
+    if user_id is None:
+        return False
+    ps = db.query(PrivacySettings).filter(PrivacySettings.user_id == user_id).first()
+    return bool(ps and ps.tier2_consent)
 
 
 @router.post("/analyze-email")
@@ -52,8 +60,8 @@ async def analyze_email(
     logger.info(f"Analyzing single file: {file.filename} ({len(content)} bytes)")
 
     try:
-        result = run_analysis(content, file.filename)
         uid = current_user.id if current_user else None
+        result = run_analysis(content, file.filename, tier2_consent=_get_tier2_consent(db, uid))
         _save(db, result, uid, "upload")
         logger.info(f"Successfully analyzed: {file.filename}, Verdict: {result.get('verdict')}")
         return result
@@ -115,11 +123,11 @@ async def analyze_batch(
 
         try:
             logger.info(f"Processing batch file {idx}/{len(files)}: {file.filename} ({file_size} bytes)")
-            result = run_analysis(content, file.filename)
             uid = current_user.id if current_user else None
+            result = run_analysis(content, file.filename, tier2_consent=_get_tier2_consent(db, uid))
             _save(db, result, uid, "batch_upload")
             results.append(result)
-            logger.info(f"✓ Processed: {file.filename}, Verdict: {result.get('verdict')}, Score: {result.get('risk_score')}")
+            logger.info(f"[OK] Processed: {file.filename}, Verdict: {result.get('verdict')}, Score: {result.get('risk_score')}")
             processed_count += 1
         except Exception as e:
             error_msg = f"Analysis error: {str(e)}"
@@ -130,7 +138,7 @@ async def analyze_batch(
     logger.info(f"Batch analysis complete: {processed_count} processed, {skipped_count} skipped")
 
     if not results:
-        logger.error(f"Batch analysis: No files successfully processed")
+        logger.error("Batch analysis: No files successfully processed")
         raise HTTPException(400, f"No files could be processed. Errors: {errors}")
 
     # Count verdicts for frontend compatibility
@@ -157,22 +165,6 @@ class ExtensionPayload(BaseModel):
     gmail_message_id: Optional[str] = None
 
 
-# Debug test endpoint
-@router.post("/test-scan")
-async def test_scan(
-    body: ExtensionPayload,
-    db: Session = Depends(get_db),
-):
-    """Test endpoint - returns what was sent."""
-    return {
-        "received": {
-            "email_content": body.email_content[:50],
-            "subject": body.subject,
-            "sender": body.sender,
-        },
-    }
-
-
 @router.post("/extension-scan")
 async def extension_scan(
     body: ExtensionPayload,
@@ -185,7 +177,8 @@ async def extension_scan(
 
     # Build minimal RFC2822-like content for the engine
     raw = f"From: {body.sender}\nTo: {body.recipient}\nSubject: {body.subject}\n\n{body.email_content}"
-    result = run_analysis(raw.encode(), f"gmail_{(body.gmail_message_id or 'ext')[:8]}.txt")
+    # extension-scan has no authenticated user — tier2 defaults to False
+    result = run_analysis(raw.encode(), f"gmail_{(body.gmail_message_id or 'ext')[:8]}.txt", tier2_consent=False)
     if body.gmail_message_id:
         result["scan_id"] = body.gmail_message_id
 
@@ -201,7 +194,7 @@ async def extension_scan(
         "risk_score":      result["risk_score"],
         "verdict":         result["verdict"],
         "color":           result["color"],
-        "phishing_prob":   result["ml_analysis"]["phishing_probability"],
+        "phishing_prob":   round(result["risk_score"] / 100, 4),
         "malicious_urls":  result["url_analysis"]["high_risk"][:5],
         "url_count":       result["url_analysis"]["total"],
         "mal_url_count":   result["url_analysis"]["malicious"],
@@ -217,7 +210,11 @@ async def extension_scan(
 
 
 def _save(db: Session, result: dict, user_id: Optional[int], source: str):
-    """Save analysis result to database."""
+    """Save analysis result to database — body_text is never persisted."""
+    import copy
+    safe_result = copy.deepcopy(result)
+    # Remove raw body text before storing — it contains client email content
+    safe_result.get("meta", {}).pop("body_text", None)
     try:
         rec = ScanRecord(
             scan_id=result["scan_id"],
@@ -228,15 +225,27 @@ def _save(db: Session, result: dict, user_id: Optional[int], source: str):
             recipient=result.get("meta", {}).get("recipient", "")[:255] if result.get("meta") else "",
             risk_score=result.get("risk_score", 0),
             verdict=result.get("verdict", "unknown"),
-            phishing_prob=result.get("ml_analysis", {}).get("phishing_probability", 0),
+            phishing_prob=round(result.get("risk_score", 0) / 100, 4),
             url_count=result.get("url_count", 0),
             attach_count=result.get("attach_count", 0),
             duration_s=result.get("duration", 0),
             source=source,
         )
         db.add(rec)
-        rep = ThreatReport(scan_id=result["scan_id"], report_json=result)
+        rep = ThreatReport(scan_id=result["scan_id"], report_json=safe_result)
         db.add(rep)
+        # Notify the user about the completed scan
+        if rec.user_id:
+            verdict = result.get("verdict", "unknown")
+            icon = {"malicious": "🚨", "suspicious": "⚠️", "safe": "✅"}.get(verdict, "🔍")
+            notif = Notification(
+                user_id=rec.user_id,
+                type="scan",
+                title=f"{icon} Scan complete — {verdict.capitalize()}",
+                body=f"{result.get('filename', 'Email')} scored {result.get('risk_score', 0)}/100",
+                link="/history",
+            )
+            db.add(notif)
         db.commit()
     except Exception as e:
         logger.error(f"Failed to save result: {e}")
@@ -313,18 +322,27 @@ def get_ioc_analytics(
     for report in reports:
         try:
             data = report.report_json if isinstance(report.report_json, dict) else json.loads(report.report_json)
+            sr = scan_map.get(report.scan_id)
+            is_threat = sr and sr.verdict in ("suspicious", "malicious")
 
-            for ioc in data.get("iocs", []):
-                if ioc.get("verdict") == "malicious":
-                    val = ioc.get("value", "")
-                    if ioc.get("type") == "domain":
+            if is_threat:
+                # IOC items carry no per-item verdict — use the scan-level verdict to
+                # determine whether domains/IPs in this scan are suspicious/malicious.
+                for ioc in data.get("iocs", []):
+                    val = (ioc.get("value") or "").strip()
+                    if not val:
+                        continue
+                    ioc_type = ioc.get("type", "")
+                    if ioc_type == "domain":
                         domain_counts[val] = domain_counts.get(val, 0) + 1
-                    elif ioc.get("type") == "ip":
+                    elif ioc_type == "ip":
                         ip_counts[val] = ip_counts.get(val, 0) + 1
 
-            sr = scan_map.get(report.scan_id)
-            if sr and sr.verdict in ("suspicious", "malicious"):
-                sender_email = (data.get("sender") or {}).get("email") or (data.get("meta") or {}).get("sender_email") or sr.sender
+                sender_email = (
+                    (data.get("sender") or {}).get("email")
+                    or (data.get("meta") or {}).get("sender_email")
+                    or sr.sender
+                )
                 if sender_email:
                     sender_counts[sender_email] = sender_counts.get(sender_email, 0) + 1
         except Exception:

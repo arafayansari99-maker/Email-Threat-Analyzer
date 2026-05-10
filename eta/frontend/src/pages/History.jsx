@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { getHistory, deleteScan, getFavourites, addFavourite, removeFavourite, getReport } from '../services/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 export default function History() {
+  const isMobile = useIsMobile()
   const [records, setRecords] = useState([])
   const [favourites, setFavourites] = useState([])
   const [favSet, setFavSet] = useState(new Set())
@@ -129,9 +131,11 @@ export default function History() {
 
   // Filter records by search query and file type
   const filteredRecords = displayRecords.filter(r => {
+    const q = searchQuery.toLowerCase()
     const matchesSearch = !searchQuery ||
-      (r.filename && r.filename.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (r.sender && r.sender.toLowerCase().includes(searchQuery.toLowerCase()))
+      (r.subject  && r.subject.toLowerCase().includes(q)) ||
+      (r.sender   && r.sender.toLowerCase().includes(q)) ||
+      (r.filename && r.filename.toLowerCase().includes(q))
     const matchesFileType = !fileTypeFilter ||
       (r.filename && r.filename.toLowerCase().endsWith(fileTypeFilter.toLowerCase()))
     return matchesSearch && matchesFileType
@@ -150,7 +154,7 @@ export default function History() {
   }, [loading, page, totalPages])
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.25rem' }}>Scan History</h1>
@@ -184,12 +188,12 @@ export default function History() {
       </div>
 
       {/* Search and Filter Bar */}
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
         {/* Search Input */}
         <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
           <input
             type="text"
-            placeholder="Search by filename or sender..."
+            placeholder="Search by subject, sender, or filename..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -198,7 +202,9 @@ export default function History() {
               color: 'var(--text)', fontSize: '0.875rem',
             }}
           />
-          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--sub)', fontSize: '0.875rem' }}>🔍</span>
+          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--sub)', lineHeight: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
         </div>
 
         {/* File Type Filter */}
@@ -228,7 +234,7 @@ export default function History() {
         </div>
       ) : filteredRecords.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-icon">{tab === 'favourites' ? '⭐' : '📧'}</div>
+          <div className="empty-state-icon">{tab === 'favourites' ? '★' : '—'}</div>
           <h3 className="empty-state-title">
             {searchQuery || fileTypeFilter ? 'No matching scans' : tab === 'favourites' ? 'No favorite scans yet' : 'No scans yet'}
           </h3>
@@ -249,7 +255,7 @@ export default function History() {
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, width: 40 }}>Compare</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, width: 52 }}>Fav</th>
-                  <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>File Name</th>
+                  <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Email</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Verdict</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Risk Score</th>
                   <th style={{ padding: '0.875rem', textAlign: 'left', color: 'var(--sub)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Date</th>
@@ -285,7 +291,23 @@ export default function History() {
                         {favSet.has(r.scan_id) ? '⭐' : '☆'}
                       </button>
                     </td>
-                    <td style={{ padding: '0.875rem', color: 'var(--text)', fontSize: '0.875rem' }}>{r.filename}</td>
+                    <td style={{ padding: '0.875rem', maxWidth: 320 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', minWidth: 0 }}>
+                        <span style={{ color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.subject || r.filename}>
+                          {r.subject || r.filename}
+                        </span>
+                        {r.sender && (
+                          <span style={{ color: 'var(--sub)', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.sender}>
+                            {r.sender}
+                          </span>
+                        )}
+                        {r.source === 'imap' && (
+                          <span style={{ fontSize: '0.625rem', padding: '0.1rem 0.4rem', borderRadius: 4, background: 'rgba(6,182,212,0.15)', color: 'var(--cyan)', fontWeight: 700, width: 'fit-content', letterSpacing: '0.04em' }}>
+                            IMAP
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ padding: '0.875rem' }}>
                       <span style={{ padding: '0.25rem 0.5rem', borderRadius: 6, fontSize: '0.6875rem', textTransform: 'uppercase', fontWeight: 600, background: getBg(r.verdict), color: getColor(r.verdict) }}>
                         {r.verdict}
@@ -315,7 +337,7 @@ export default function History() {
         }} onClick={closeCompare}>
           <div style={{
             background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16,
-            width: '100%', maxWidth: 1200, maxHeight: '90vh', overflow: 'auto', padding: '1.5rem',
+            width: '95vw', maxWidth: 1200, maxHeight: '90vh', overflow: 'auto', padding: '1.5rem',
           }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
               <h2 style={{ color: 'var(--text)', fontSize: '1.25rem', fontWeight: 600 }}>Scan Comparison</h2>
@@ -325,7 +347,7 @@ export default function History() {
             {compareLoading ? (
               <p style={{ color: 'var(--sub)', textAlign: 'center', padding: '2rem' }}>Loading reports...</p>
             ) : compareData.length === 2 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '1.5rem' }}>
                 {[0, 1].map(idx => {
                   const d = compareData[idx]
                   // More flexible matching - try both number and string

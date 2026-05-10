@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import api from '../services/api'
 import { useToast } from '../hooks/useToast'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 export default function UserManagement() {
+  const isMobile = useIsMobile()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -61,6 +63,15 @@ export default function UserManagement() {
     } catch (err) { showError('Failed to delete user') }
   }
 
+  const handleReject = async (id, username) => {
+    if (!confirm(`Reject and remove "${username}"? This cannot be undone.`)) return
+    try {
+      await api.delete(`/api/users/${id}`)
+      success('Registration rejected')
+      loadUsers()
+    } catch (err) { showError('Failed to reject user') }
+  }
+
   const handleRoleChange = async (userId, newRole) => {
     try {
       await api.patch(`/api/users/${userId}`, { role: newRole })
@@ -82,8 +93,8 @@ export default function UserManagement() {
   }[role] || { bg: '#64748B', text: '#fff' })
 
   return (
-    <div style={{ padding: '1.5rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>User Management</h1>
           <p style={{ color: '#64748B', fontSize: '0.9375rem' }}>Manage users and their roles</p>
@@ -135,7 +146,7 @@ export default function UserManagement() {
         }} onClick={() => setShowModal(false)}>
           <div style={{
             background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)',
-            padding: '2rem', width: '100%', maxWidth: '420px'
+            padding: isMobile ? '1rem' : '2rem', width: '95vw', maxWidth: '420px'
           }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '1.5rem' }}>Add New User</h2>
             <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -198,7 +209,7 @@ export default function UserManagement() {
       )}
 
       {/* Search */}
-      <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
         <input
           type="text"
           placeholder="Search users..."
@@ -225,6 +236,7 @@ export default function UserManagement() {
         </div>
       ) : (
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: '1.5rem' }}>
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
@@ -283,40 +295,59 @@ export default function UserManagement() {
                     </td>
                     <td style={{ padding: '0.875rem', textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                        {!u.is_approved && (
+                        {!u.is_approved ? (
+                          <>
+                            <button
+                              onClick={() => handleApprove(u.id)}
+                              style={{
+                                padding: '0.375rem 0.75rem',
+                                borderRadius: 6,
+                                border: '1px solid #10B981',
+                                background: 'transparent',
+                                color: '#10B981',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleReject(u.id, u.username)}
+                              style={{
+                                padding: '0.375rem 0.75rem',
+                                borderRadius: 6,
+                                border: '1px solid #EF4444',
+                                background: 'transparent',
+                                color: '#EF4444',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              Reject
+                            </button>
+                          </>
+                        ) : (
                           <button
-                            onClick={() => handleApprove(u.id)}
+                            onClick={() => handleDelete(u.id)}
                             style={{
                               padding: '0.375rem 0.75rem',
                               borderRadius: 6,
-                              border: '1px solid #10B981',
+                              border: '1px solid #EF4444',
                               background: 'transparent',
-                              color: '#10B981',
+                              color: '#EF4444',
                               cursor: 'pointer',
                               fontSize: '0.75rem',
                               fontWeight: 500,
                               transition: 'all 0.15s ease'
                             }}
                           >
-                            Approve
+                            Delete
                           </button>
                         )}
-                        <button
-                          onClick={() => handleDelete(u.id)}
-                          style={{
-                            padding: '0.375rem 0.75rem',
-                            borderRadius: 6,
-                            border: '1px solid #EF4444',
-                            background: 'transparent',
-                            color: '#EF4444',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem',
-                            fontWeight: 500,
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          Delete
-                        </button>
                       </div>
                     </td>
                   </tr>
@@ -324,11 +355,12 @@ export default function UserManagement() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '120px' : '150px'}, 1fr))`, gap: '1rem' }}>
         <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1rem', textAlign: 'center' }}>
           <p style={{ color: '#64748B', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Total</p>
           <p style={{ color: '#06B6D4', fontSize: '1.5rem', fontWeight: 'bold' }}>{users.length}</p>

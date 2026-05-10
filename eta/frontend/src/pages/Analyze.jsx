@@ -1,17 +1,29 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../hooks/useToast'
 import { useAnalysisQueue } from '../hooks/useAnalysisQueue'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const MAX_FILE_SIZE = 300 * 1024 * 1024 // 300 MB
 
-function TabButton({ active, onClick, children }) {
+const VERDICT_COLOR  = { malicious: 'var(--red)', suspicious: 'var(--amber)', safe: '#10B981' }
+const VERDICT_BG     = { malicious: 'rgba(239,68,68,0.15)', suspicious: 'rgba(245,158,11,0.15)', safe: 'rgba(16,185,129,0.15)' }
+const getColor  = v => VERDICT_COLOR[v]  || '#64748B'
+const getBgColor = v => VERDICT_BG[v]    || 'rgba(100,116,139,0.15)'
+
+// ── Shared sub-components ─────────────────────────────────────────────────────
+
+function TabButton({ id, active, onClick, children }) {
   return (
     <button
+      id={`tab-${id}`}
+      role="tab"
+      aria-selected={active}
+      aria-controls={`tabpanel-${id}`}
       onClick={onClick}
       style={{
-        padding: '0.75rem 1.5rem',
+        padding: '0.75rem 1.25rem',
         borderRadius: 8,
         border: 'none',
         background: active ? 'var(--cyan)' : 'transparent',
@@ -19,7 +31,8 @@ function TabButton({ active, onClick, children }) {
         fontSize: '0.9375rem',
         fontWeight: 600,
         cursor: 'pointer',
-        transition: 'all 0.2s ease'
+        transition: 'all 0.2s ease',
+        flexShrink: 0,
       }}
     >
       {children}
@@ -27,13 +40,140 @@ function TabButton({ active, onClick, children }) {
   )
 }
 
-function ResultCard({ result }) {
-  const getColor = (v) => ({ malicious: 'var(--red)', suspicious: 'var(--amber)', safe: '#10B981' }[v] || '#64748B')
-  const getBgColor = (v) => ({ malicious: 'rgba(239,68,68,0.15)', suspicious: 'rgba(245,158,11,0.15)', safe: 'rgba(16,185,129,0.15)' }[v] || 'rgba(100,116,139,0.15)')
+function ProgressBar({ progress, label }) {
+  return (
+    <div style={{ marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+        <span style={{ color: '#64748B', fontSize: '0.8125rem' }}>{label}</span>
+        <span style={{ color: 'var(--cyan)', fontSize: '0.8125rem' }}>{progress}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuenow={progress}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={label}
+        style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}
+      >
+        <div style={{ height: '100%', width: `${progress}%`, background: 'var(--cyan)', transition: 'width 0.3s ease' }} />
+      </div>
+    </div>
+  )
+}
+
+function SubmitButton({ disabled, loading, children }) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled}
+      style={{
+        width: '100%',
+        padding: '0.875rem',
+        borderRadius: 8,
+        background: disabled ? 'var(--border)' : 'var(--cyan)',
+        color: disabled ? '#64748B' : '#fff',
+        border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontSize: '0.9375rem',
+        fontWeight: 600,
+        opacity: loading ? 0.7 : 1,
+        transition: 'background 0.2s',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ErrorBanner({ message }) {
+  if (!message) return null
+  return (
+    <div
+      role="alert"
+      style={{ color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '1rem', padding: '0.75rem', background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}
+    >
+      {message}
+    </div>
+  )
+}
+
+function DropZone({ inputRef, label, hint, icon, summary, disabled, onDrop, onClick }) {
+  const isMobile = useIsMobile()
+  const [dragOver, setDragOver] = useState(false)
+
+  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true) }
+  const handleDragLeave = () => setDragOver(false)
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragOver(false)
+    onDrop(e.dataTransfer.files)
+  }
+  const handleKey = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() }
+  }
 
   return (
-    <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginTop: '1.5rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+    <div style={{ marginBottom: '1rem' }}>
+      <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {label}
+      </label>
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-label={`${label} — click or press Enter to browse`}
+        aria-disabled={disabled}
+        onClick={onClick}
+        onKeyDown={handleKey}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        style={{
+          width: '100%',
+          padding: isMobile ? '1.5rem 1rem' : '2.5rem 1rem',
+          minHeight: isMobile ? '160px' : undefined,
+          borderRadius: 8,
+          border: `2px dashed ${dragOver ? 'var(--cyan)' : 'var(--border)'}`,
+          background: dragOver ? 'rgba(6,182,212,0.05)' : 'var(--surface)',
+          color: 'var(--sub)',
+          fontSize: '0.9375rem',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '0.5rem',
+          transition: 'border-color 0.2s, background 0.2s',
+          outline: 'none',
+          boxSizing: 'border-box',
+        }}
+        onFocus={e => { e.currentTarget.style.borderColor = 'var(--cyan)' }}
+        onBlur={e => { if (!dragOver) e.currentTarget.style.borderColor = 'var(--border)' }}
+      >
+        {icon && <span aria-hidden="true" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>{icon}</span>}
+        <span>{summary}</span>
+        <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{hint}</span>
+      </div>
+      {inputRef && <input ref={inputRef} type="file" style={{ display: 'none' }} aria-hidden="true" />}
+    </div>
+  )
+}
+
+function ResultCard({ result }) {
+  const isMobile = useIsMobile()
+  const phishingProb = (result.risk_score ?? 0) / 100
+
+  const threats = result.header_analysis
+    ? [
+        ...(result.url_analysis?.indicators || []).filter(i => i.severity === 'critical' || i.severity === 'high').map(i => i.desc),
+        ...(result.header_analysis?.indicators || []).filter(i => i.severity === 'critical' || i.severity === 'high').map(i => i.desc),
+        ...(result.attachment_analysis?.indicators || []).filter(i => i.severity === 'critical').map(i => i.desc),
+      ].filter(Boolean).slice(0, 5)
+    : (result.indicators || []).map(i => (typeof i === 'string' ? i : i.desc)).filter(Boolean).slice(0, 5)
+
+  return (
+    <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem', marginTop: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.5rem' }}>
         <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--text)', margin: 0 }}>Analysis Result</h3>
         <span style={{
           padding: '0.375rem 0.875rem',
@@ -42,29 +182,30 @@ function ResultCard({ result }) {
           fontWeight: 600,
           textTransform: 'uppercase',
           background: getBgColor(result.verdict),
-          color: getColor(result.verdict)
+          color: getColor(result.verdict),
         }}>
           {result.verdict}
         </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+      {/* Responsive 2-col → 1-col on small screens */}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '120px' : '160px'}, 1fr))`, gap: '1rem', marginBottom: '1rem' }}>
         <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', textAlign: 'center' }}>
           <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Risk Score</p>
           <p style={{ fontSize: '2rem', fontWeight: 'bold', color: getColor(result.verdict) }}>{result.risk_score}</p>
         </div>
         <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', textAlign: 'center' }}>
-          <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Phishing</p>
-          <p style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--text)' }}>{(result.phishing_prob * 100).toFixed(1)}%</p>
+          <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Phishing Prob.</p>
+          <p style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--text)' }}>{(phishingProb * 100).toFixed(1)}%</p>
         </div>
       </div>
 
-      {result.threats && result.threats.length > 0 && (
+      {threats.length > 0 && (
         <div style={{ marginBottom: '1rem' }}>
           <p style={{ color: '#64748B', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Detected Threats</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {result.threats.map((t, i) => (
-              <span key={i} style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'var(--red)20', color: 'var(--red)', fontSize: '0.75rem', fontWeight: 500 }}>
+            {threats.map((t, i) => (
+              <span key={i} style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'rgba(239,68,68,0.15)', color: 'var(--red)', fontSize: '0.75rem', fontWeight: 500 }}>
                 {t}
               </span>
             ))}
@@ -72,30 +213,27 @@ function ResultCard({ result }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <Link
-          to={`/reports/${result.scan_id}`}
-          style={{
-            flex: 1,
-            padding: '0.75rem',
-            borderRadius: 8,
-            background: 'var(--cyan)',
-            color: 'var(--text)',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            textAlign: 'center',
-            textDecoration: 'none',
-            display: 'inline-block'
-          }}
-        >
-          View Full Report
-        </Link>
-      </div>
+      <Link
+        to={`/reports/${result.scan_id}`}
+        style={{
+          display: 'block',
+          padding: '0.75rem',
+          borderRadius: 8,
+          background: 'var(--cyan)',
+          color: '#fff',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          textAlign: 'center',
+          textDecoration: 'none',
+        }}
+      >
+        View Full Report
+      </Link>
     </div>
   )
 }
+
+// ── FileAnalyzer ──────────────────────────────────────────────────────────────
 
 function FileAnalyzer() {
   const [file, setFile] = useState(null)
@@ -103,353 +241,219 @@ function FileAnalyzer() {
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [retryCount, setRetryCount] = useState(0)
+  const inputRef = useRef(null)
 
-  const handleFileChange = (e) => {
-    const f = e.target.files?.[0]
-    if (f) {
-      if (f.size > MAX_FILE_SIZE) {
-        setError('File too large. Maximum size is 300MB.')
-        return
-      }
-      setFile(f)
-      setResult(null)
-      setError('')
-    }
+  const pickFile = () => inputRef.current?.click()
+
+  const applyFile = (f) => {
+    if (!f) return
+    if (f.size > MAX_FILE_SIZE) { setError('File too large. Maximum size is 300 MB.'); return }
+    setFile(f); setResult(null); setError(''); setRetryCount(0)
   }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!file) return
-    setLoading(true)
-    setProgress(0)
+  const handleChange = (e) => applyFile(e.target.files?.[0])
+
+  const runAnalysis = async (fileToAnalyze) => {
+    setLoading(true); setProgress(0); setError('')
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const { data } = await api.post('/api/analyze-email', formData, {
-        onUploadProgress: (e) => setProgress(Math.round((e.loaded * 100) / e.total))
+      const fd = new FormData()
+      fd.append('file', fileToAnalyze)
+      const { data } = await api.post('/api/analyze-email', fd, {
+        timeout: 180000,
+        onUploadProgress: (e) => setProgress(Math.round((e.loaded * 100) / e.total)),
       })
-      console.log('API response:', data)
       setResult(data)
+      setRetryCount(0)
     } catch (err) {
-      console.log('API error:', err)
-      setError(err.response?.data?.detail || 'Analysis failed')
+      const isNetwork = !err.response
+      const msg = err.response?.data?.detail || (isNetwork ? 'Network error — check your connection.' : 'Analysis failed.')
+      setError(msg)
+      if (isNetwork) setRetryCount(c => c + 1)
     } finally {
-      setLoading(false)
-      setProgress(0)
+      setLoading(false); setProgress(0)
     }
   }
+
+  const handleSubmit = (e) => { e.preventDefault(); if (file) runAnalysis(file) }
+  const handleRetry  = ()  => { if (file) runAnalysis(file) }
 
   return (
-    <div>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Upload Email File (PDF, EML, MSG, TXT, CSV)
-          </label>
-          <div
-            onClick={() => document.getElementById('single-file-input').click()}
-            style={{
-              width: '100%',
-              padding: '2.5rem 1rem',
-              borderRadius: 8,
-              border: '2px dashed var(--border)',
-              background: 'var(--surface)',
-              color: 'var(--sub)',
-              fontSize: '0.9375rem',
-              cursor: 'pointer',
-              textAlign: 'center',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.5rem',
-              transition: 'border-color 0.2s, background 0.2s'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.borderColor = 'var(--cyan)'
-              e.currentTarget.style.background = 'rgba(6,182,212,0.05)'
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.borderColor = 'var(--border)'
-              e.currentTarget.style.background = 'var(--surface)'
-            }}
-          >
-            <span style={{ fontSize: '1.5rem' }}>📧</span>
-            <span>{file ? file.name : 'Click to select email file'}</span>
-            <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>PDF, EML, MSG, TXT, CSV</span>
-          </div>
-          <input
-            id="single-file-input"
-            type="file"
-            accept=".eml,.msg,.txt,.pdf,.csv"
-            onChange={handleFileChange}
-            disabled={loading}
-            style={{ display: 'none' }}
-          />
-          {file && (
-            <p style={{ color: 'var(--cyan)', fontSize: '0.8125rem', marginTop: '0.5rem', textAlign: 'center' }}>
-              Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
-            </p>
+    <form onSubmit={handleSubmit}>
+      <DropZone
+        inputRef={inputRef}
+        label="Upload Email File (EML, MSG, TXT, PDF, CSV)"
+        hint="EML · MSG · TXT · PDF · CSV — max 300 MB"
+        icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>}
+        summary={file ? `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)` : 'Click or drag-and-drop to select email file'}
+        disabled={loading}
+        onClick={pickFile}
+        onDrop={(files) => applyFile(files[0])}
+      />
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".eml,.msg,.txt,.pdf,.csv"
+        onChange={handleChange}
+        disabled={loading}
+        style={{ display: 'none' }}
+        aria-hidden="true"
+      />
+
+      {error && (
+        <div role="alert" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.1)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--red)', fontSize: '0.8125rem' }}>{error}</span>
+          {retryCount > 0 && retryCount <= 3 && (
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={loading}
+              style={{ padding: '0.375rem 0.875rem', borderRadius: 6, border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.12)', color: 'var(--red)', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+            >
+              Retry ({retryCount}/3)
+            </button>
           )}
         </div>
+      )}
 
-        {error && (
-          <div style={{ color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '1rem', padding: '0.75rem', background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>
-            {error}
-          </div>
-        )}
+      {loading && <ProgressBar progress={progress} label="Analyzing…" />}
 
-        {loading && (
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-              <span style={{ color: '#64748B', fontSize: '0.8125rem' }}>Analyzing...</span>
-              <span style={{ color: 'var(--cyan)', fontSize: '0.8125rem' }}>{progress}%</span>
-            </div>
-            <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: progress + '%', background: 'var(--cyan)', transition: 'width 0.3s ease' }} />
-            </div>
-          </div>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading || !file}
-          style={{
-            width: '100%',
-            padding: '0.875rem',
-            borderRadius: 8,
-            background: loading || !file ? 'var(--border)' : 'var(--cyan)',
-            color: file ? '#fff' : '#64748B',
-            border: 'none',
-            cursor: file ? 'pointer' : 'not-allowed',
-            fontSize: '0.9375rem',
-            fontWeight: 600,
-            opacity: loading ? 0.7 : 1
-          }}
-        >
-          {loading ? 'Analyzing...' : 'Analyze File'}
-        </button>
-      </form>
+      <SubmitButton disabled={loading || !file} loading={loading}>
+        {loading ? 'Analyzing…' : 'Analyze File'}
+      </SubmitButton>
 
       {result && <ResultCard result={result} />}
-    </div>
+    </form>
   )
 }
 
+// ── BatchAnalyzer ─────────────────────────────────────────────────────────────
+
 function BatchAnalyzer() {
+  const isMobile = useIsMobile()
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [results, setResults] = useState(null)
   const [error, setError] = useState('')
-  const { success, error: showError } = useToast()
+  const inputRef = useRef(null)
+  const { success } = useToast()
   const navigate = useNavigate()
-  const { jobs, addJob, clearDone } = useAnalysisQueue()
+  const { clearDone } = useAnalysisQueue()
 
-  useEffect(() => {
-    const h = () => {
-      if (jobs.some(j => j.status === 'processing')) {
-        const active = jobs.find(j => j.status === 'processing')
-        setProgress(active?.progress || 0)
-      }
-    }
-    const int = setInterval(h, 500)
-    return () => clearInterval(int)
-  }, [jobs])
+  const pickFiles = () => inputRef.current?.click()
 
-  const handleQueueComplete = useCallback((r) => {
-    const total = results?.total || files.length
-    const mal = results?.malicious || 0
-    const sus = results?.suspicious || 0
-    const safe = results?.safe || 0
-    const msg = `Batch complete: ${total} files — ${mal} malicious, ${sus} suspicious, ${safe} safe`
-    success(msg)
-    // Auto-clear done jobs after 10s
-    setTimeout(() => clearDone(), 10000)
-  }, [results, files.length, success, clearDone])
-
-  const handleFileChange = (e) => {
-    const selected = Array.from(e.target.files || [])
-    const validFiles = selected.filter(f => {
-      if (f.size > MAX_FILE_SIZE) {
-        setError(`File ${f.name} is too large (max 300MB)`)
-        return false
-      }
+  const applyFiles = (fileList) => {
+    const valid = Array.from(fileList).filter(f => {
+      if (f.size > MAX_FILE_SIZE) { setError(`${f.name} exceeds 300 MB`); return false }
       return true
     })
-    setFiles(validFiles)
-    setResults(null)
-    setError('')
+    setFiles(valid); setResults(null); setError('')
   }
 
-  const handleAnalyze = async () => {
-    if (files.length === 0) return
-    setLoading(true)
-    setProgress(0)
+  const handleChange = (e) => applyFiles(e.target.files || [])
+
+  const handleAnalyze = async (e) => {
+    e.preventDefault()
+    if (!files.length) return
+    setLoading(true); setProgress(0)
     try {
-      const formData = new FormData()
-      files.forEach(f => formData.append('files', f))
-      const { data } = await api.post('/api/analyze-batch', formData, {
-        onUploadProgress: (e) => setProgress(Math.round((e.loaded * 100) / e.total))
+      const fd = new FormData()
+      files.forEach(f => fd.append('files', f))
+      const { data } = await api.post('/api/analyze-batch', fd, {
+        timeout: 180000,
+        onUploadProgress: (e) => setProgress(Math.round((e.loaded * 100) / e.total)),
       })
       setResults(data)
-      // Show toast on batch completion
-      const total = data.total || files.length
-      const mal = data.malicious || 0
-      const sus = data.suspicious || 0
-      const safe = data.safe || 0
-      success(`Batch complete: ${total} files — ${mal} malicious, ${sus} suspicious, ${safe} safe`)
+      success(`Batch complete: ${data.total ?? files.length} files — ${data.malicious ?? 0} malicious, ${data.suspicious ?? 0} suspicious, ${data.safe ?? 0} safe`)
+      setTimeout(() => clearDone(), 10000)
     } catch (err) {
       setError(err.response?.data?.detail || 'Batch analysis failed')
     } finally {
-      setLoading(false)
-      setProgress(0)
+      setLoading(false); setProgress(0)
     }
   }
 
-  const getColor = (v) => ({ malicious: 'var(--red)', suspicious: 'var(--amber)', safe: '#10B981' }[v] || '#64748B')
-  const getBgColor = (v) => ({ malicious: 'rgba(239,68,68,0.15)', suspicious: 'rgba(245,158,11,0.15)', safe: 'rgba(16,185,129,0.15)' }[v] || 'rgba(100,116,139,0.15)')
-
   return (
-    <div>
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Upload Multiple Files (PDF, EML, MSG, TXT, CSV) - Max 300MB each
-        </label>
-        <div
-          onClick={() => document.getElementById('batch-file-input').click()}
-          style={{
-            width: '100%',
-            padding: '2.5rem 1rem',
-            borderRadius: 8,
-            border: '2px dashed var(--border)',
-            background: 'var(--surface)',
-            color: 'var(--sub)',
-            fontSize: '0.9375rem',
-            cursor: 'pointer',
-            textAlign: 'center',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.5rem',
-            transition: 'border-color 0.2s, background 0.2s'
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.borderColor = 'var(--cyan)'
-            e.currentTarget.style.background = 'rgba(6,182,212,0.05)'
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.borderColor = 'var(--border)'
-            e.currentTarget.style.background = 'var(--surface)'
-          }}
-        >
-          <span style={{ fontSize: '1.5rem' }}>📁</span>
-          <span>{files.length > 0 ? `${files.length} file(s) selected` : 'Click to select multiple files'}</span>
-          <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>PDF, EML, MSG, TXT, CSV - Max 300MB each</span>
-        </div>
-        <input
-          id="batch-file-input"
-          type="file"
-          multiple
-          accept=".eml,.msg,.txt,.pdf,.csv"
-          onChange={handleFileChange}
-          disabled={loading}
-          style={{ display: 'none' }}
-        />
-        {files.length > 0 && (
-          <div style={{ marginTop: '0.75rem' }}>
-            <p style={{ color: '#64748B', fontSize: '0.8125rem', marginBottom: '0.5rem' }}>
-              {files.length} file(s) selected
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: 100, overflowY: 'auto' }}>
-              {files.slice(0, 5).map((f, i) => (
-                <span key={i} style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'var(--border)', color: 'var(--text)', fontSize: '0.75rem' }}>
-                  {f.name}
-                </span>
-              ))}
-              {files.length > 5 && (
-                <span style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'var(--border)', color: '#64748B', fontSize: '0.75rem' }}>
-                  +{files.length - 5} more
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+    <form onSubmit={handleAnalyze}>
+      <DropZone
+        label="Upload Multiple Files (EML, MSG, TXT, PDF, CSV) — max 300 MB each"
+        hint="EML · MSG · TXT · PDF · CSV"
+        icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>}
+        summary={files.length > 0 ? `${files.length} file(s) selected` : 'Click or drag-and-drop to select multiple files'}
+        disabled={loading}
+        onClick={pickFiles}
+        onDrop={applyFiles}
+      />
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept=".eml,.msg,.txt,.pdf,.csv"
+        onChange={handleChange}
+        disabled={loading}
+        style={{ display: 'none' }}
+        aria-hidden="true"
+      />
 
-      {error && (
-        <div style={{ color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '1rem', padding: '0.75rem', background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>
-          {error}
-        </div>
-      )}
-
-      {loading && (
-        <div style={{ marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-            <span style={{ color: '#64748B', fontSize: '0.8125rem' }}>Analyzing {files.length} files...</span>
-            <span style={{ color: 'var(--cyan)', fontSize: '0.8125rem' }}>{progress}%</span>
-          </div>
-          <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: progress + '%', background: 'var(--cyan)', transition: 'width 0.3s ease' }} />
+      {files.length > 0 && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <p style={{ color: '#64748B', fontSize: '0.8125rem', marginBottom: '0.5rem' }}>{files.length} file(s) selected</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: 100, overflowY: 'auto' }}>
+            {files.slice(0, 5).map((f, i) => (
+              <span key={i} style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'var(--border)', color: 'var(--text)', fontSize: '0.75rem' }}>
+                {f.name}
+              </span>
+            ))}
+            {files.length > 5 && (
+              <span style={{ padding: '0.25rem 0.625rem', borderRadius: 6, background: 'var(--border)', color: '#64748B', fontSize: '0.75rem' }}>
+                +{files.length - 5} more
+              </span>
+            )}
           </div>
         </div>
       )}
 
-      <button
-        onClick={handleAnalyze}
-        disabled={loading || files.length === 0}
-        style={{
-          width: '100%',
-          padding: '0.875rem',
-          borderRadius: 8,
-          background: loading || files.length === 0 ? 'var(--border)' : 'var(--cyan)',
-          color: files.length === 0 ? '#64748B' : '#fff',
-          border: 'none',
-          cursor: files.length === 0 ? 'not-allowed' : 'pointer',
-          fontSize: '0.9375rem',
-          fontWeight: 600,
-          opacity: loading ? 0.7 : 1
-        }}
-      >
-        {loading ? 'Analyzing...' : `Analyze ${files.length} File${files.length !== 1 ? 's' : ''}`}
-      </button>
+      <ErrorBanner message={error} />
+      {loading && <ProgressBar progress={progress} label={`Analyzing ${files.length} files…`} />}
+
+      <SubmitButton disabled={loading || files.length === 0} loading={loading}>
+        {loading ? 'Analyzing…' : `Analyze ${files.length} File${files.length !== 1 ? 's' : ''}`}
+      </SubmitButton>
 
       {results && (
-        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginTop: '1.5rem' }}>
+        <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem', marginTop: '1.5rem' }}>
           <h3 style={{ fontSize: '1.125rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '1rem' }}>Batch Results</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
-            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
-              <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>Total</p>
-              <p style={{ color: 'var(--cyan)', fontSize: '1.5rem', fontWeight: 'bold' }}>{results.total || files.length}</p>
-            </div>
-            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
-              <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>Malicious</p>
-              <p style={{ color: 'var(--red)', fontSize: '1.5rem', fontWeight: 'bold' }}>{results.malicious || 0}</p>
-            </div>
-            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
-              <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>Suspicious</p>
-              <p style={{ color: 'var(--amber)', fontSize: '1.5rem', fontWeight: 'bold' }}>{results.suspicious || 0}</p>
-            </div>
-            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
-              <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>Safe</p>
-              <p style={{ color: '#10B981', fontSize: '1.5rem', fontWeight: 'bold' }}>{results.safe || 0}</p>
-            </div>
+
+          {/* Responsive 4-col → 2-col → 1-col */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+            {[
+              { label: 'Total',      value: results.total ?? files.length, color: 'var(--cyan)' },
+              { label: 'Malicious',  value: results.malicious ?? 0,        color: 'var(--red)' },
+              { label: 'Suspicious', value: results.suspicious ?? 0,       color: 'var(--amber)' },
+              { label: 'Safe',       value: results.safe ?? 0,             color: '#10B981' },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ background: 'var(--surface)', borderRadius: 8, padding: '0.75rem', textAlign: 'center' }}>
+                <p style={{ color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>{label}</p>
+                <p style={{ color, fontSize: '1.5rem', fontWeight: 'bold' }}>{value}</p>
+              </div>
+            ))}
           </div>
-          {results.results && results.results.length > 0 && (
-            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+
+          {results.results?.length > 0 && (
+            <div style={{ overflowX: 'auto', maxHeight: 300, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 360 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>File</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>Verdict</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>Score</th>
+                    {['File', 'Verdict', 'Score'].map(h => (
+                      <th key={h} style={{ padding: '0.5rem', textAlign: 'left', color: '#64748B', fontSize: '0.625rem', textTransform: 'uppercase' }}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {results.results.slice(0, 20).map((r, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '0.5rem', color: 'var(--text)', fontSize: '0.75rem' }}>{r.filename}</td>
+                      <td style={{ padding: '0.5rem', color: 'var(--text)', fontSize: '0.75rem', wordBreak: 'break-all' }}>{r.filename}</td>
                       <td style={{ padding: '0.5rem' }}>
                         <span style={{ padding: '0.125rem 0.375rem', borderRadius: 4, fontSize: '0.625rem', textTransform: 'uppercase', background: getBgColor(r.verdict), color: getColor(r.verdict) }}>
                           {r.verdict}
@@ -462,35 +466,30 @@ function BatchAnalyzer() {
               </table>
             </div>
           )}
-          {results && results.results && results.results.length > 0 && (
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
-              <button
-                onClick={() => navigate('/reports')}
-                style={{
-                  flex: 1, padding: '0.75rem', borderRadius: 8,
-                  background: 'var(--cyan)', color: '#fff', border: 'none',
-                  cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
-                }}
-              >
-                View All Reports
-              </button>
-              <button
-                onClick={() => { setFiles([]); setResults(null) }}
-                style={{
-                  flex: 1, padding: '0.75rem', borderRadius: 8,
-                  background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)',
-                  cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
-                }}
-              >
-                Analyze More
-              </button>
-            </div>
-          )}
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? '0.5rem' : '0.75rem', marginTop: '1rem' }}>
+            <button
+              type="button"
+              onClick={() => navigate('/reports')}
+              style={{ flex: '1 1 120px', padding: '0.75rem', borderRadius: 8, background: 'var(--cyan)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+            >
+              View All Reports
+            </button>
+            <button
+              type="button"
+              onClick={() => { setFiles([]); setResults(null) }}
+              style={{ flex: '1 1 120px', padding: '0.75rem', borderRadius: 8, background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+            >
+              Analyze More
+            </button>
+          </div>
         </div>
       )}
-    </div>
+    </form>
   )
 }
+
+// ── TextAnalyzer ──────────────────────────────────────────────────────────────
 
 function TextAnalyzer() {
   const [emailText, setEmailText] = useState('')
@@ -500,23 +499,25 @@ function TextAnalyzer() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
 
-  const handleAnalyze = async () => {
-    if (!emailText.trim()) {
-      setError('Please paste email content to analyze')
-      return
-    }
-    setLoading(true)
-    setError('')
+  const inputStyle = {
+    width: '100%',
+    padding: '0.75rem',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: '0.9375rem',
+    boxSizing: 'border-box',
+  }
+
+  const handleAnalyze = async (e) => {
+    e.preventDefault()
+    if (!emailText.trim()) { setError('Please paste email content to analyze'); return }
+    setLoading(true); setError('')
     try {
-      const { data } = await api.post('/api/extension-scan', {
-        email_content: emailText,
-        sender: sender,
-        subject: subject
-      })
-      console.log('Text analysis response:', data)
+      const { data } = await api.post('/api/extension-scan', { email_content: emailText, sender, subject }, { timeout: 180000 })
       setResult(data)
     } catch (err) {
-      console.log('Text analysis error:', err)
       setError(err.response?.data?.detail || 'Analysis failed')
     } finally {
       setLoading(false)
@@ -524,139 +525,82 @@ function TextAnalyzer() {
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Sender (optional)
-        </label>
-        <input
-          type="text"
-          placeholder="sender@example.com"
-          value={sender}
-          onChange={(e) => setSender(e.target.value)}
-          disabled={loading}
-          style={{
-            width: '100%',
-            padding: '0.75rem',
-            borderRadius: 8,
-            border: '1px solid var(--border)',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            fontSize: '0.9375rem'
-          }}
-        />
+    <form onSubmit={handleAnalyze}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+        <div>
+          <label htmlFor="text-sender" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sender (optional)</label>
+          <input id="text-sender" type="text" placeholder="sender@example.com" value={sender} onChange={e => setSender(e.target.value)} disabled={loading} style={inputStyle} />
+        </div>
+        <div>
+          <label htmlFor="text-subject" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Subject (optional)</label>
+          <input id="text-subject" type="text" placeholder="Email subject" value={subject} onChange={e => setSubject(e.target.value)} disabled={loading} style={inputStyle} />
+        </div>
       </div>
 
       <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Subject (optional)
-        </label>
-        <input
-          type="text"
-          placeholder="Email subject"
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          disabled={loading}
-          style={{
-            width: '100%',
-            padding: '0.75rem',
-            borderRadius: 8,
-            border: '1px solid var(--border)',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            fontSize: '0.9375rem'
-          }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Email Content *
-        </label>
+        <label htmlFor="text-body" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email Content *</label>
         <textarea
-          placeholder="Paste email content here to analyze for malicious or suspicious content..."
+          id="text-body"
+          placeholder="Paste email content here to analyze for malicious or suspicious content…"
           value={emailText}
-          onChange={(e) => setEmailText(e.target.value)}
+          onChange={e => setEmailText(e.target.value)}
           disabled={loading}
           rows={10}
-          style={{
-            width: '100%',
-            padding: '0.75rem',
-            borderRadius: 8,
-            border: '1px solid var(--border)',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            fontSize: '0.9375rem',
-            fontFamily: 'inherit',
-            resize: 'vertical'
-          }}
+          style={{ ...inputStyle, fontFamily: 'inherit', resize: 'vertical' }}
         />
       </div>
 
-      {error && (
-        <div style={{ color: 'var(--red)', fontSize: '0.8125rem', marginBottom: '1rem', padding: '0.75rem', background: 'rgba(239,68,68,0.1)', borderRadius: 8 }}>
-          {error}
-        </div>
-      )}
+      <ErrorBanner message={error} />
 
-      <button
-        onClick={handleAnalyze}
-        disabled={loading || !emailText.trim()}
-        style={{
-          width: '100%',
-          padding: '0.875rem',
-          borderRadius: 8,
-          background: loading || !emailText.trim() ? 'var(--border)' : 'var(--cyan)',
-          color: emailText.trim() ? '#fff' : '#64748B',
-          border: 'none',
-          cursor: emailText.trim() ? 'pointer' : 'not-allowed',
-          fontSize: '0.9375rem',
-          fontWeight: 600,
-          opacity: loading ? 0.7 : 1
-        }}
-      >
-        {loading ? 'Analyzing...' : 'Analyze Text'}
-      </button>
+      <SubmitButton disabled={loading || !emailText.trim()} loading={loading}>
+        {loading ? 'Analyzing…' : 'Analyze Text'}
+      </SubmitButton>
 
       {result && <ResultCard result={result} />}
-    </div>
+    </form>
   )
 }
 
+// ── Page root ─────────────────────────────────────────────────────────────────
+
 export default function Analyze() {
+  const isMobile = useIsMobile()
   const [activeTab, setActiveTab] = useState('file')
 
   const tabs = [
-    { id: 'file', label: 'Single File' },
+    { id: 'file',  label: 'Single File' },
     { id: 'batch', label: 'Batch Upload' },
-    { id: 'text', label: 'Text Analysis' }
+    { id: 'text',  label: 'Text Analysis' },
   ]
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
       <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Email Analyzer</h1>
         <p style={{ color: '#64748B', fontSize: '0.9375rem' }}>Analyze emails for threats using file upload or text input</p>
       </div>
 
-      {/* Tab Buttons */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
+      <div
+        role="tablist"
+        aria-label="Analysis modes"
+        style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}
+      >
         {tabs.map(tab => (
-          <TabButton
-            key={tab.id}
-            active={activeTab === tab.id}
-            onClick={() => setActiveTab(tab.id)}
-          >
+          <TabButton key={tab.id} id={tab.id} active={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}>
             {tab.label}
           </TabButton>
         ))}
       </div>
 
-      {/* Tab Content */}
-      <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem' }}>
-        {activeTab === 'file' && <FileAnalyzer />}
+      <div
+        id={`tabpanel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`tab-${activeTab}`}
+        style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: isMobile ? '1rem' : '1.5rem' }}
+      >
+        {activeTab === 'file'  && <FileAnalyzer />}
         {activeTab === 'batch' && <BatchAnalyzer />}
-        {activeTab === 'text' && <TextAnalyzer />}
+        {activeTab === 'text'  && <TextAnalyzer />}
       </div>
     </div>
   )

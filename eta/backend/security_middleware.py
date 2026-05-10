@@ -5,6 +5,7 @@ Rate limiting, logging, monitoring, and API authentication hardening.
 import os
 import time
 import logging
+import ipaddress
 from typing import Callable
 from functools import wraps
 
@@ -131,9 +132,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 f"duration={duration:.3f}s"
             )
 
-            # Add timing header
-            response.headers["X-Process-Time"] = str(duration)
-
             return response
         except Exception as e:
             duration = time.time() - start_time
@@ -151,12 +149,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable):
         response = await call_next(request)
 
-        # Add security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "font-src 'self' data:; "
+            "frame-ancestors 'none';"
+        )
+
+        # Only send HSTS on HTTPS connections — sending it over HTTP locks browsers into HTTPS
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         return response
 
@@ -180,24 +190,30 @@ class IPBlocklistMiddleware(BaseHTTPMiddleware):
 
 # === Helpers ===
 
+def _is_valid_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
 def get_client_ip(request: Request) -> str:
-    """Get real client IP, respecting proxy headers."""
-    # Check X-Forwarded-For
+    """Get real client IP, respecting proxy headers. Only trust IPs that parse as valid addresses."""
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        ip = forwarded.split(",")[0].strip()
+        if _is_valid_ip(ip):
+            return ip
 
-    # Check X-Real-IP
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
+    real_ip = request.headers.get("X-Real-IP", "").strip()
+    if real_ip and _is_valid_ip(real_ip):
         return real_ip
 
-    # Check CF-Connecting-IP (Cloudflare)
-    cf_ip = request.headers.get("CF-Connecting-IP")
-    if cf_ip:
+    cf_ip = request.headers.get("CF-Connecting-IP", "").strip()
+    if cf_ip and _is_valid_ip(cf_ip):
         return cf_ip
 
-    # Fall back to request client
     return request.client.host if request.client else "unknown"
 
 

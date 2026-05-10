@@ -1,20 +1,20 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import api, { getStats, getHistory, getWidgetOrder, saveWidgetOrder, getScanTrends, getIOCStats, cachedGet } from '../services/api'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area } from 'recharts'
 
 const WIDGET_REGISTRY = {
-  overview: { icon: '📊', title: 'Overview', label: 'overview', component: 'stats' },
-  recent_scans: { icon: '📋', title: 'Recent Scans', label: 'recent_scans', component: 'recentScans' },
-  verdict_chart: { icon: '🥧', title: 'Verdict Chart', label: 'verdict_chart', component: 'pieChart' },
-  quick_access: { icon: '⚡', title: 'Quick Access', label: 'quick_access', component: 'quickAccess' },
-  threat_news: { icon: '📰', title: 'Threat News', label: 'threat_news', component: 'threatNews' },
-  malicious_domains: { icon: '🚨', title: 'Malicious Domains', label: 'malicious_domains', component: 'maliciousDomains' },
-  detected_urls: { icon: '🔗', title: 'Top Detected URLs', label: 'detected_urls', component: 'detectedUrls' },
-  malicious_senders: { icon: '📧', title: 'Top Malicious Senders', label: 'malicious_senders', component: 'maliciousSenders' },
-  threat_breakdown: { icon: '📈', title: 'Threat Type Breakdown', label: 'threat_breakdown', component: 'threatBreakdown' },
-  scan_volume: { icon: '📉', title: 'Scan Volume', label: 'scan_volume', component: 'scanVolume' },
+  overview: { title: 'Overview', label: 'overview', component: 'stats' },
+  recent_scans: { title: 'Recent Scans', label: 'recent_scans', component: 'recentScans' },
+  verdict_chart: { title: 'Verdict Chart', label: 'verdict_chart', component: 'pieChart' },
+  quick_access: { title: 'Quick Access', label: 'quick_access', component: 'quickAccess' },
+  threat_news: { title: 'Threat News', label: 'threat_news', component: 'threatNews' },
+  malicious_domains: { title: 'Malicious Domains', label: 'malicious_domains', component: 'maliciousDomains' },
+  detected_urls: { title: 'Top Detected URLs', label: 'detected_urls', component: 'detectedUrls' },
+  malicious_senders: { title: 'Top Malicious Senders', label: 'malicious_senders', component: 'maliciousSenders' },
+  threat_breakdown: { title: 'Threat Type Breakdown', label: 'threat_breakdown', component: 'threatBreakdown' },
+  scan_volume: { title: 'Scan Volume', label: 'scan_volume', component: 'scanVolume' },
 }
 
 const DEFAULT_WIDGET_ORDER = ['overview', 'verdict_chart', 'threat_breakdown', 'scan_volume', 'recent_scans', 'detected_urls', 'malicious_senders', 'malicious_domains', 'threat_news', 'quick_access']
@@ -30,52 +30,42 @@ export default function Dashboard() {
   const [trends, setTrends] = useState([])
   const [iocStats, setIocStats] = useState({ urls: [], senders: [] })
   const location = useLocation()
+  const hasLoadedOnce = useRef(false)
 
-  // Reload data when returning to dashboard (from analysis or other pages)
   useEffect(() => {
     loadData()
-    loadWidgetOrder()
   }, [location.key])
-
-  const loadWidgetOrder = async () => {
-    try {
-      const { data } = await getWidgetOrder()
-      if (data?.order && Array.isArray(data.order)) {
-        // Merge saved order with any new widgets that might not be in saved order
-        const savedOrder = data.order
-        const allWidgetKeys = Object.keys(WIDGET_REGISTRY)
-        const mergedOrder = [...savedOrder]
-        allWidgetKeys.forEach(key => {
-          if (!mergedOrder.includes(key)) {
-            mergedOrder.push(key)
-          }
-        })
-        setWidgetOrder(mergedOrder)
-      }
-    } catch {}
-  }
 
   const saveOrder = async (newOrder) => {
     try { await saveWidgetOrder(newOrder) } catch {}
   }
 
   const loadData = async () => {
+    const isFirstLoad = !hasLoadedOnce.current
+    if (isFirstLoad) setLoading(true)
+
     try {
-      setLoading(true)
-      // Load all data in parallel for faster response
-      const [s, h, t, ioc] = await Promise.all([
-        getStats(),
-        getHistory(1, 10),
-        getScanTrends(7).catch(() => ({ data: { daily: [] } })),
-        getIOCStats(10).catch(() => ({ data: { urls: [], senders: [] } }))
+      const [s, h, t, ioc, wo] = await Promise.all([
+        cachedGet('/api/history/stats', { cacheKey: 'dash_stats', ttl: 60000 }),
+        cachedGet('/api/history/scan-history', { cacheKey: 'dash_history', ttl: 60000, page: 1, limit: 10 }),
+        cachedGet('/api/analytics/trends', { cacheKey: 'dash_trends', ttl: 60000, days: 7 }).catch(() => ({ daily: [] })),
+        cachedGet('/api/analytics/ioc-stats', { cacheKey: 'dash_ioc', ttl: 60000, limit: 10 }).catch(() => ({ urls: [], senders: [] })),
+        cachedGet('/api/settings/widget-order', { cacheKey: 'dash_widget_order', ttl: 300000 }).catch(() => null),
       ])
-      setStats(s.data || s || {})
-      setHistory(h.data?.records || h?.records || [])
-      setTrends(t.data?.daily || t?.data?.trend || [])
-      setIocStats(ioc.data || { urls: [], senders: [] })
+      setStats(s || {})
+      setHistory(h?.records || [])
+      setTrends(t?.daily || t?.trend || [])
+      setIocStats(ioc || { urls: [], senders: [] })
+      if (wo?.order && Array.isArray(wo.order)) {
+        const allWidgetKeys = Object.keys(WIDGET_REGISTRY)
+        const mergedOrder = [...wo.order]
+        allWidgetKeys.forEach(key => { if (!mergedOrder.includes(key)) mergedOrder.push(key) })
+        setWidgetOrder(mergedOrder)
+      }
+      hasLoadedOnce.current = true
     } catch (e) {
       console.error(e)
-      setError('Failed to load dashboard data')
+      if (isFirstLoad) setError('Failed to load dashboard data')
     } finally {
       setLoading(false)
     }
@@ -98,7 +88,6 @@ export default function Dashboard() {
     { to: '/analytics', label: 'Analytics', desc: 'Visualize threat statistics and trends', color: 'var(--pink)' },
     { to: '/reports', label: 'Reports', desc: 'Generate detailed threat reports', color: 'var(--amber)' },
     { to: '/graph', label: 'IOC Graph', desc: 'Interactive threat indicator visualization', color: 'var(--green)' },
-    { to: '/collaborate', label: 'Collaborate', desc: 'Workspaces, comments & team activity', color: 'var(--pink)' },
     { to: '/privacy', label: 'Privacy', desc: 'Manage your data and privacy settings', color: 'var(--sub)' },
     { to: '/settings', label: 'Settings', desc: 'Update profile and preferences', color: 'var(--sub)' },
   ], [])
@@ -621,7 +610,7 @@ export default function Dashboard() {
               <div key={wid} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '0.375rem 0.625rem' }}>
                 <button disabled={idx === 0} onClick={() => moveUp(idx)}
                   style={{ background: 'none', border: 'none', color: idx === 0 ? 'var(--sub)' : 'var(--text)', cursor: idx === 0 ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0 0.25rem' }}>⬆</button>
-                <span style={{ fontSize: '0.8125rem', color: 'var(--text)' }}>{WIDGET_REGISTRY[wid]?.icon} {WIDGET_REGISTRY[wid]?.title}</span>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text)' }}>{WIDGET_REGISTRY[wid]?.title}</span>
                 <button disabled={idx === widgetOrder.length - 1} onClick={() => moveDown(idx)}
                   style={{ background: 'none', border: 'none', color: idx === widgetOrder.length - 1 ? 'var(--sub)' : 'var(--text)', cursor: idx === widgetOrder.length - 1 ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0 0.25rem' }}>⬇</button>
               </div>

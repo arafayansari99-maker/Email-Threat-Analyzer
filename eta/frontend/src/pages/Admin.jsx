@@ -1,6 +1,73 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
+import { VirtualList } from '../hooks/useVirtualList'
+import { useIsMobile } from '../hooks/useIsMobile'
+import { getAdminConversations, getAdminUserMessages, getChatWsUrl } from '../services/api'
+
+// ── Accessible confirmation modal ─────────────────────────────────────────────
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-title"
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
+      onClick={onCancel}
+    >
+      <div
+        style={{ background: 'var(--card)', borderRadius: 12, padding: '1.5rem', maxWidth: 340, width: '95vw', boxShadow: '0 25px 50px rgba(0,0,0,0.5)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <p id="confirm-title" style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '1.25rem', lineHeight: 1.5 }}>{message}</p>
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} autoFocus
+            style={{ padding: '0.5rem 1rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', fontSize: '0.875rem' }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            style={{ padding: '0.5rem 1rem', borderRadius: 6, border: 'none', background: 'var(--red)', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Accessible inline config-value editor ─────────────────────────────────────
+function ConfigEditModal({ configKey, currentValue, onSave, onCancel }) {
+  const [val, setVal] = useState(currentValue)
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="config-edit-title"
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
+      onClick={onCancel}
+    >
+      <div
+        style={{ background: 'var(--card)', borderRadius: 12, padding: '1.5rem', maxWidth: 400, width: '95vw' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <p id="config-edit-title" style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+          Edit: <code style={{ color: 'var(--cyan)', fontFamily: 'monospace' }}>{configKey}</code>
+        </p>
+        <input
+          autoFocus
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') onSave(val); if (e.key === 'Escape') onCancel() }}
+          style={{ width: '100%', padding: '0.625rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontFamily: 'monospace', marginBottom: '1rem', boxSizing: 'border-box' }}
+        />
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{ padding: '0.5rem 1rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', fontSize: '0.875rem' }}>Cancel</button>
+          <button onClick={() => onSave(val)} style={{ padding: '0.5rem 1rem', borderRadius: 6, border: 'none', background: 'var(--cyan)', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>Save</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 import api, {
   getAuditLogs, getAdminStats, getAPIUsage, getAdminConfig, updateAdminConfig, getHealth,
   getDashboardActivity, getDashboardUsers, getPendingUsers, getDashboardTrends,
@@ -9,12 +76,12 @@ import api, {
 } from '../services/api'
 
 const ADMIN_WIDGET_REGISTRY = {
-  threat_stats: { icon: '📊', title: 'Stats Cards', label: 'threat_stats' },
-  verdict_chart: { icon: '🥧', title: 'Verdict Chart', label: 'verdict_chart' },
-  recent_scans: { icon: '📋', title: 'Recent Scans', label: 'recent_scans' },
-  quick_analyze: { icon: '⚡', title: 'Quick Analyze', label: 'quick_analyze' },
-  top_threats: { icon: '🚨', title: 'Top Threats', label: 'top_threats' },
-  activity_feed: { icon: '🔔', title: 'Activity Feed', label: 'activity_feed' },
+  threat_stats: { title: 'Stats Cards', label: 'threat_stats' },
+  verdict_chart: { title: 'Verdict Chart', label: 'verdict_chart' },
+  recent_scans: { title: 'Recent Scans', label: 'recent_scans' },
+  quick_analyze: { title: 'Quick Analyze', label: 'quick_analyze' },
+  top_threats: { title: 'Top Threats', label: 'top_threats' },
+  activity_feed: { title: 'Activity Feed', label: 'activity_feed' },
 }
 
 const DEFAULT_ADMIN_WIDGET_ORDER = ['threat_stats', 'verdict_chart', 'recent_scans', 'quick_analyze', 'top_threats', 'activity_feed']
@@ -40,6 +107,7 @@ const StatCard = ({ icon, label, value, color, onClick }) => (
 export default function Admin() {
   const { user } = useAuth()
   const { success, error: showError } = useToast()
+  const isMobile = useIsMobile()
   const [tab, setTab] = useState('dashboard') // dashboard | users | audit | stats | api | config | health
 
   // Logs / Audit
@@ -79,7 +147,19 @@ export default function Admin() {
   const [widgetOrder, setWidgetOrder] = useState(DEFAULT_ADMIN_WIDGET_ORDER)
   const [editMode, setEditMode] = useState(false)
 
-  useEffect(() => { loadAuditLogs() }, [logPage, logAction])
+  // Accessible modals (replaces confirm() and prompt())
+  const [confirmModal, setConfirmModal] = useState(null)
+  const [configEditModal, setConfigEditModal] = useState(null)
+
+  // ── Messages (support chat) ────────────────────────────────────────────────
+  const [conversations, setConversations] = useState([])
+  const [convoLoading, setConvoLoading] = useState(false)
+  const [activeConvo, setActiveConvo] = useState(null) // { user_id, username }
+  const [convoMessages, setConvoMessages] = useState([])
+  const [adminInput, setAdminInput] = useState('')
+  const adminWsRef = useRef(null)
+  const adminWsMounted = useRef(false)
+  const convoEndRef = useRef(null)
 
   useEffect(() => { if (tab === 'dashboard') loadWidgetOrder() }, [tab])
 
@@ -121,9 +201,7 @@ export default function Admin() {
   const [userLoading, setUserLoading] = useState(true)
   const [showRoleModal, setShowRoleModal] = useState(null)
 
-  useEffect(() => { loadAuditLogs() }, [logPage, logAction])
-
-  const loadAuditLogs = async () => {
+  const loadAuditLogs = useCallback(async () => {
     setLogLoading(true)
     try {
       const { data } = await getAuditLogs(logPage, 30, logAction)
@@ -131,7 +209,7 @@ export default function Admin() {
       setLogTotal(data.total || 0)
     } catch { /* ignore */ }
     setLogLoading(false)
-  }
+  }, [logPage, logAction])
 
   const loadStats = async () => {
     setStatsLoading(true)
@@ -191,16 +269,17 @@ export default function Admin() {
   }
 
   useEffect(() => { loadUsers() }, [userPage, userSearch])
+  useEffect(() => { loadAuditLogs() }, [loadAuditLogs])
 
   // Load data when tab changes
   useEffect(() => {
     if (tab === 'dashboard') loadDashboard()
     if (tab === 'users') loadUsers()
-    if (tab === 'audit') loadAuditLogs()
     if (tab === 'stats') loadStats()
     if (tab === 'api') loadAPIUsage()
     if (tab === 'config') loadConfig()
     if (tab === 'health') loadHealth()
+    if (tab === 'messages') loadConversations()
   }, [tab])
 
   const handleNewConfig = async () => {
@@ -218,9 +297,78 @@ export default function Admin() {
     catch { showError('Failed to update') }
   }
 
+  const loadConversations = async () => {
+    setConvoLoading(true)
+    try {
+      const { data } = await getAdminConversations()
+      setConversations(data || [])
+    } catch {}
+    finally { setConvoLoading(false) }
+  }
+
+  const openConversation = async (convo) => {
+    setActiveConvo(convo)
+    setConvoMessages([])
+    try {
+      const { data } = await getAdminUserMessages(convo.user_id)
+      setConvoMessages(data || [])
+      setTimeout(() => convoEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+    } catch {}
+    // Connect admin WebSocket if not already open
+    if (!adminWsRef.current || adminWsRef.current.readyState !== WebSocket.OPEN) {
+      connectAdminWS()
+    }
+    // Refresh conversation list (unread count resets)
+    loadConversations()
+  }
+
+  const connectAdminWS = () => {
+    adminWsMounted.current = true
+    const url = getChatWsUrl('admin')
+    const ws = new WebSocket(url)
+    adminWsRef.current = ws
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        // Skip echo (admin's own sent message — already added optimistically)
+        if (data.type === 'message' && !data.echo) {
+          setConvoMessages(prev => [...prev, data])
+          setTimeout(() => convoEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+          loadConversations()
+        }
+      } catch {}
+    }
+    ws.onclose = () => {
+      if (adminWsMounted.current) setTimeout(connectAdminWS, 3000)
+    }
+    ws.onerror = () => ws.close()
+  }
+
+  const sendAdminMessage = () => {
+    if (!adminInput.trim() || !activeConvo) return
+    const text = adminInput.trim()
+    setAdminInput('')
+    if (adminWsRef.current?.readyState === WebSocket.OPEN) {
+      adminWsRef.current.send(JSON.stringify({ message: text, user_id: activeConvo.user_id }))
+      setConvoMessages(prev => [...prev, {
+        id: Date.now(), sender_role: 'admin', sender_name: user?.username,
+        message: text, created_at: new Date().toISOString(),
+      }])
+      setTimeout(() => convoEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    }
+  }
+
+  // Disconnect admin WS when leaving Messages tab
+  useEffect(() => {
+    if (tab !== 'messages') {
+      adminWsMounted.current = false
+      adminWsRef.current?.close()
+    }
+  }, [tab])
+
   const tabs = [
-    ['dashboard', '📈 Dashboard'], ['users', '👥 Users'], ['audit', '📋 Audit Log'], ['stats', '📊 Usage Stats'], ['api', '🔑 API Monitoring'],
-    ['config', '⚙️ Config'], ['health', '💚 Health'],
+    ['dashboard', 'Dashboard'], ['users', 'Users'], ['audit', 'Audit Log'], ['stats', 'Usage Stats'], ['api', 'API Monitoring'],
+    ['config', 'Config'], ['health', 'Health'], ['messages', 'Messages'],
   ]
 
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
@@ -233,7 +381,7 @@ export default function Admin() {
   )
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
       <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.25rem' }}>Admin Panel</h1>
@@ -245,12 +393,21 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0', marginBottom: '1.25rem', borderBottom: '1px solid var(--border)' }}>
+      <div
+        role="tablist"
+        aria-label="Admin sections"
+        style={{ display: 'flex', flexWrap: 'wrap', gap: '0', marginBottom: '1.25rem', borderBottom: '1px solid var(--border)' }}
+      >
         {tabs.map(([t, label]) => (
-          <button key={t} onClick={() => setTab(t)}
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            aria-controls={`adminpanel-${t}`}
+            onClick={() => setTab(t)}
             style={{ padding: '0.625rem 1.25rem', border: 'none', borderBottom: `2px solid ${tab === t ? 'var(--cyan)' : 'transparent'}`,
               background: 'transparent', color: tab === t ? 'var(--cyan)' : 'var(--sub)',
-              cursor: 'pointer', fontSize: '0.875rem', fontWeight: tab === t ? 600 : 400, marginBottom: -1 }}>
+              cursor: 'pointer', fontSize: '0.875rem', fontWeight: tab === t ? 600 : 400, marginBottom: -1, whiteSpace: 'nowrap' }}>
             {label}
           </button>
         ))}
@@ -265,7 +422,7 @@ export default function Admin() {
               <div key={wid} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '0.375rem 0.625rem' }}>
                 <button disabled={idx === 0} onClick={() => moveUp(idx)}
                   style={{ background: 'none', border: 'none', color: idx === 0 ? 'var(--sub)' : 'var(--text)', cursor: idx === 0 ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0 0.25rem' }}>⬆</button>
-                <span style={{ fontSize: '0.8125rem', color: 'var(--text)' }}>{ADMIN_WIDGET_REGISTRY[wid]?.icon} {ADMIN_WIDGET_REGISTRY[wid]?.title}</span>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text)' }}>{ADMIN_WIDGET_REGISTRY[wid]?.title}</span>
                 <button disabled={idx === widgetOrder.length - 1} onClick={() => moveDown(idx)}
                   style={{ background: 'none', border: 'none', color: idx === widgetOrder.length - 1 ? 'var(--sub)' : 'var(--text)', cursor: idx === widgetOrder.length - 1 ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0 0.25rem' }}>⬇</button>
               </div>
@@ -287,7 +444,7 @@ export default function Admin() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
 
             {/* Stats Cards */}
-            <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+            <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '140px' : '200px'}, 1fr))`, gap: '1rem' }}>
               <StatCard label="Total Users" value={dashUsers.length + dashPending.length} color="var(--cyan)" />
               <StatCard label="Pending Approvals" value={dashPending.length} color="var(--amber)" />
               <StatCard label="Recent Scans" value={dashTrends.reduce((s, t) => s + t.total, 0)} color="var(--green)" />
@@ -296,18 +453,23 @@ export default function Admin() {
 
             {/* Trend Chart */}
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem', gridColumn: '1 / -1' }}>
-              <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '1rem' }}>📊 Scan Trends (Last 14 Days)</h3>
+              <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '1rem' }}>Scan Trends (Last 14 Days)</h3>
               {dashTrends.length > 0 ? (
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: 120 }}>
                   {dashTrends.map((d, i) => {
                     const maxVal = Math.max(...dashTrends.map(t => t.total), 1)
-                    const h = maxVal > 0 ? (d.total / maxVal) * 100 : 0
-                    const malH = maxVal > 0 ? (d.malicious / maxVal) * 100 : 0
+                    const safe = Math.max(0, d.safe || 0)
+                    const susp = Math.max(0, d.suspicious || 0)
+                    const mal = Math.max(0, d.malicious || 0)
+                    const safeH = (safe / maxVal) * 100
+                    const suspH = (susp / maxVal) * 100
+                    const malH = (mal / maxVal) * 100
                     return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
                         <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                          <div style={{ width: '100%', height: h, background: 'var(--cyan)', borderRadius: '2px 2px 0 0', opacity: 0.8 }} />
-                          <div style={{ width: '100%', height: malH, background: 'var(--red)', borderRadius: '0 0 2px 2px' }} />
+                          {safeH > 0 && <div style={{ width: '100%', height: safeH, background: 'var(--green)', borderRadius: '2px 2px 0 0', opacity: 0.85 }} />}
+                          {suspH > 0 && <div style={{ width: '100%', height: suspH, background: 'var(--amber)', opacity: 0.85 }} />}
+                          {malH > 0 && <div style={{ width: '100%', height: malH, background: 'var(--red)', borderRadius: malH > 0 && safeH === 0 && suspH === 0 ? '2px 2px 2px 2px' : '0 0 2px 2px' }} />}
                         </div>
                         <span style={{ fontSize: '0.5625rem', color: 'var(--sub)', writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: 40 }}>{d.date.slice(5)}</span>
                       </div>
@@ -318,7 +480,8 @@ export default function Admin() {
                 <p style={{ color: 'var(--sub)' }}>No scan data available</p>
               )}
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.75rem', fontSize: '0.6875rem' }}>
-                <span style={{ color: 'var(--cyan)' }}>● Total</span>
+                <span style={{ color: 'var(--green)' }}>● Safe</span>
+                <span style={{ color: 'var(--amber)' }}>● Suspicious</span>
                 <span style={{ color: 'var(--red)' }}>● Malicious</span>
               </div>
             </div>
@@ -326,14 +489,18 @@ export default function Admin() {
             {/* Recent Activity */}
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)' }}>
-                <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>🔔 Recent Activity</h3>
+                <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>Recent Activity</h3>
               </div>
               {dashActivity.length === 0 ? (
                 <p style={{ color: 'var(--sub)', padding: '1.5rem', textAlign: 'center' }}>No recent activity</p>
               ) : (
-                <div style={{ maxHeight: 300, overflow: 'auto' }}>
-                  {dashActivity.slice(0, 10).map(a => (
-                    <div key={a.id} style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <VirtualList
+                  items={dashActivity}
+                  itemHeight={62}
+                  containerStyle={{ height: 300 }}
+                  keyExtractor={a => a.id}
+                  renderItem={a => (
+                    <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.75rem', alignItems: 'center', height: '100%', boxSizing: 'border-box' }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--cyan)', flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 500 }}>{a.username}</p>
@@ -343,22 +510,26 @@ export default function Admin() {
                         {new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                  ))}
-                </div>
+                  )}
+                />
               )}
             </div>
 
             {/* Recent Users */}
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)' }}>
-                <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>👥 Recent Users</h3>
+                <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>Recent Users</h3>
               </div>
               {dashUsers.length === 0 ? (
                 <p style={{ color: 'var(--sub)', padding: '1.5rem', textAlign: 'center' }}>No users found</p>
               ) : (
-                <div style={{ maxHeight: 300, overflow: 'auto' }}>
-                  {dashUsers.map(u => (
-                    <div key={u.id} style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <VirtualList
+                  items={dashUsers}
+                  itemHeight={62}
+                  containerStyle={{ height: 300 }}
+                  keyExtractor={u => u.id}
+                  renderItem={u => (
+                    <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%', boxSizing: 'border-box' }}>
                       <div>
                         <p style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 500 }}>{u.username}</p>
                         <p style={{ color: 'var(--sub)', fontSize: '0.6875rem' }}>{u.email}</p>
@@ -369,15 +540,15 @@ export default function Admin() {
                         {u.role}
                       </span>
                     </div>
-                  ))}
-                </div>
+                  )}
+                />
               )}
             </div>
 
             {/* Pending Approvals */}
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>⏳ Pending Approvals</h3>
+                <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>Pending Approvals</h3>
                 <span style={{ background: 'var(--amber)', color: 'var(--text)', padding: '0.125rem 0.5rem', borderRadius: 10, fontSize: '0.6875rem', fontWeight: 600 }}>
                   {dashPending.length}
                 </span>
@@ -385,27 +556,48 @@ export default function Admin() {
               {dashPending.length === 0 ? (
                 <p style={{ color: 'var(--sub)', padding: '1.5rem', textAlign: 'center' }}>No pending users</p>
               ) : (
-                <div style={{ maxHeight: 300, overflow: 'auto' }}>
-                  {dashPending.map(u => (
-                    <div key={u.id} style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <p style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 500 }}>{u.username}</p>
-                        <p style={{ color: 'var(--sub)', fontSize: '0.6875rem' }}>{u.email}</p>
+                <VirtualList
+                  items={dashPending}
+                  itemHeight={62}
+                  containerStyle={{ height: Math.min(dashPending.length * 62, 300) }}
+                  keyExtractor={u => u.id}
+                  renderItem={u => (
+                    <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%', boxSizing: 'border-box' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <p style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</p>
+                        <p style={{ color: 'var(--sub)', fontSize: '0.6875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</p>
                       </div>
-                      <button
-                        onClick={async () => {
-                          try {
-                            await approveUser(u.id)
-                            success(`Approved ${u.username}`)
-                            loadDashboard()
-                          } catch { showError('Failed to approve user') }
-                        }}
-                        style={{ background: 'var(--green)', color: 'var(--text)', border: 'none', padding: '0.375rem 0.75rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
-                        Approve
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await approveUser(u.id)
+                              success(`Approved ${u.username}`)
+                              loadDashboard()
+                            } catch { showError('Failed to approve user') }
+                          }}
+                          style={{ background: 'var(--green)', color: '#fff', border: 'none', padding: '0.375rem 0.625rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => setConfirmModal({
+                            message: `Reject and remove "${u.username}"? This cannot be undone.`,
+                            onConfirm: async () => {
+                              setConfirmModal(null)
+                              try {
+                                await deleteUser(u.id)
+                                success(`Rejected ${u.username}`)
+                                loadDashboard()
+                              } catch { showError('Failed to reject user') }
+                            },
+                          })}
+                          style={{ background: 'transparent', color: 'var(--red)', border: '1px solid var(--red)', padding: '0.375rem 0.625rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                          Reject
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  )}
+                />
               )}
             </div>
 
@@ -425,17 +617,22 @@ export default function Admin() {
               style={{ flex: '1 1 200px', padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem' }}
             />
             <select
-              onChange={async e => {
+              onChange={e => {
                 const days = parseInt(e.target.value) || 30
-                if (confirm(`Delete all scans older than ${days} days?`)) {
-                  try {
-                    const { data } = await bulkDeleteScans(days)
-                    success(data.message)
-                  } catch { showError('Failed to delete scans') }
-                }
+                if (!days) return
+                setConfirmModal({
+                  message: `Delete all scans older than ${days} days? This cannot be undone.`,
+                  onConfirm: async () => {
+                    setConfirmModal(null)
+                    try {
+                      const { data } = await bulkDeleteScans(days)
+                      success(data.message)
+                    } catch { showError('Failed to delete scans') }
+                  },
+                })
               }}
               style={{ padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.8125rem' }}>
-              <option value="">🗑️ Bulk Delete Scans</option>
+              <option value="">Bulk Delete Scans</option>
               <option value="7">Delete older than 7 days</option>
               <option value="30">Delete older than 30 days</option>
               <option value="90">Delete older than 90 days</option>
@@ -454,7 +651,7 @@ export default function Admin() {
                 } catch { showError('Export failed') }
               }}
               style={{ padding: '0.5rem 1rem', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer', fontSize: '0.8125rem' }}>
-              📥 Export Users
+              Export Users
             </button>
           </div>
 
@@ -465,7 +662,8 @@ export default function Admin() {
             ) : allUsers.length === 0 ? (
               <p style={{ color: 'var(--sub)', padding: '2rem', textAlign: 'center' }}>No users found</p>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     {['User', 'Role', 'Status', 'Approved', 'Joined', 'Actions'].map(h => (
@@ -517,12 +715,14 @@ export default function Admin() {
                           Role
                         </button>
                         <button
-                          onClick={async () => {
-                            if (confirm(`Delete user ${u.username}?`)) {
+                          onClick={() => setConfirmModal({
+                            message: `Permanently delete user "${u.username}" (${u.email})?`,
+                            onConfirm: async () => {
+                              setConfirmModal(null)
                               try { await deleteUser(u.id); success('Deleted'); loadUsers() }
                               catch { showError('Failed to delete') }
-                            }
-                          }}
+                            },
+                          })}
                           style={{ background: 'var(--red)', color: 'var(--text)', border: 'none', padding: '0.25rem 0.5rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.6875rem' }}>
                           Del
                         </button>
@@ -531,6 +731,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 
@@ -546,7 +747,7 @@ export default function Admin() {
           {/* Role Modal */}
           {showRoleModal && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-              <div style={{ background: 'var(--card)', borderRadius: 12, padding: '1.5rem', maxWidth: 300, width: '90%' }}>
+              <div style={{ background: 'var(--card)', borderRadius: 12, padding: '1.5rem', maxWidth: 300, width: '95vw' }}>
                 <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Change Role for {showRoleModal.username}</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {['user', 'analyst', 'admin', 'superadmin'].map(r => (
@@ -597,7 +798,8 @@ export default function Admin() {
             {logLoading ? <p style={{ color: 'var(--sub)', padding: '2rem', textAlign: 'center' }}>Loading...</p> : logs.length === 0 ? (
               <p style={{ color: 'var(--sub)', padding: '2rem', textAlign: 'center' }}>No audit logs found</p>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     {['Timestamp', 'User ID', 'Action', 'Target', 'IP Address', 'Details'].map(h => (
@@ -628,6 +830,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 
@@ -645,7 +848,7 @@ export default function Admin() {
       {/* ── Usage Stats ── */}
       {tab === 'stats' && (
         statsLoading ? <p style={{ color: 'var(--sub)' }}>Loading...</p> : stats ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? '140px' : '200px'}, 1fr))`, gap: '1rem', marginBottom: '1.5rem' }}>
             {[
               ['Total Scans', stats.total_scans, 'var(--cyan)'],
               ['This Month', stats.scans_this_month, 'var(--amber)'],
@@ -666,7 +869,7 @@ export default function Admin() {
       {/* ── API Rate Monitoring ── */}
       {tab === 'api' && (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? '140px' : '180px'}, 1fr))`, gap: '0.75rem', marginBottom: '1.5rem' }}>
             {Object.entries(apiLimits).map(([svc, limit]) => {
               const usage = (apiUsage.filter(u => u.service === svc) || []).reduce((s, u) => s + u.requests, 0)
               const pct = limit > 0 ? Math.min(100, (usage / limit) * 100) : 0
@@ -686,7 +889,8 @@ export default function Admin() {
               <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)' }}>
                 <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600 }}>Per-User API Usage</h3>
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 360 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     {['User', 'Service', 'Total Requests'].map(h => (
@@ -704,6 +908,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
@@ -735,7 +940,8 @@ export default function Admin() {
             {configLoading ? <p style={{ color: 'var(--sub)', padding: '2rem', textAlign: 'center' }}>Loading...</p> : configKeys.length === 0 ? (
               <p style={{ color: 'var(--sub)', padding: '2rem', textAlign: 'center' }}>No configuration keys set</p>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 320 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     {['Key', 'Value', 'Actions'].map(h => (
@@ -749,7 +955,7 @@ export default function Admin() {
                       <td style={{ padding: '0.75rem', color: 'var(--cyan)', fontSize: '0.8125rem', fontFamily: 'monospace' }}>{key}</td>
                       <td style={{ padding: '0.75rem', color: 'var(--text)', fontSize: '0.8125rem', fontFamily: 'monospace', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</td>
                       <td style={{ padding: '0.75rem' }}>
-                        <button onClick={() => { const v = prompt('New value:', value); if (v !== null) handleKeyEdit(key, v) }}
+                        <button onClick={() => setConfigEditModal({ key, value })}
                           style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--sub)', cursor: 'pointer', fontSize: '0.75rem', padding: '0.25rem 0.625rem', borderRadius: 4 }}>
                           Edit
                         </button>
@@ -758,6 +964,7 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </div>
@@ -768,7 +975,7 @@ export default function Admin() {
         healthLoading ? <p style={{ color: 'var(--sub)' }}>Loading...</p> : health ? (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <span style={{ fontSize: '2rem' }}>{health.status === 'healthy' ? '✅' : '⚠️'}</span>
+              <span style={{ width: 12, height: 12, borderRadius: '50%', background: health.status === 'healthy' ? 'var(--green)' : 'var(--amber)', display: 'inline-block', flexShrink: 0 }} />
               <div>
                 <p style={{ color: 'var(--text)', fontSize: '1.25rem', fontWeight: 700, textTransform: 'capitalize' }}>{health.status}</p>
                 <p style={{ color: 'var(--sub)', fontSize: '0.8125rem' }}>ETA v{health.version}</p>
@@ -778,7 +985,7 @@ export default function Admin() {
               <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem' }}>
                 <h4 style={{ color: 'var(--text)', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>Database</h4>
                 <p style={{ color: health.database.ok ? 'var(--green)' : 'var(--red)', fontSize: '0.875rem' }}>
-                  {health.database.ok ? '✅ Connected' : '❌ Error: ' + health.database.message}
+                  {health.database.ok ? 'Connected' : 'Error: ' + health.database.message}
                 </p>
               </div>
               <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem' }}>
@@ -803,6 +1010,132 @@ export default function Admin() {
             </div>
           </div>
         ) : <p style={{ color: 'var(--sub)' }}>Health check unavailable</p>
+      )}
+
+      {/* ── Messages ── */}
+      {tab === 'messages' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '1rem', height: '70vh', minHeight: 400 }}>
+
+          {/* Conversation list */}
+          <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h3 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>Conversations</h3>
+              <button onClick={loadConversations} style={{ background: 'none', border: 'none', color: 'var(--sub)', cursor: 'pointer', fontSize: '0.875rem' }} title="Refresh">↻</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {convoLoading ? (
+                <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', textAlign: 'center', padding: '2rem' }}>Loading…</p>
+              ) : conversations.length === 0 ? (
+                <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', textAlign: 'center', padding: '2rem' }}>No conversations yet</p>
+              ) : conversations.map(c => (
+                <button key={c.user_id} onClick={() => openConversation(c)}
+                  style={{
+                    width: '100%', textAlign: 'left', background: activeConvo?.user_id === c.user_id ? 'var(--surface)' : 'none',
+                    border: 'none', borderBottom: '1px solid var(--border)', padding: '0.75rem 1rem', cursor: 'pointer',
+                    display: 'flex', alignItems: 'flex-start', gap: '0.625rem',
+                  }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--cyan)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.8125rem', fontWeight: 700, color: 'var(--bg)' }}>
+                    {(c.username || '?')[0].toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.username}</span>
+                      {c.unread > 0 && (
+                        <span style={{ background: 'var(--cyan)', color: 'var(--bg)', borderRadius: 99, fontSize: '0.625rem', fontWeight: 700, padding: '0.1rem 0.4rem', flexShrink: 0 }}>{c.unread}</span>
+                      )}
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.6875rem', color: 'var(--sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.last_message || '—'}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Chat thread */}
+          <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {!activeConvo ? (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '0.5rem', color: 'var(--sub)' }}>
+                <p style={{ margin: 0, fontSize: '0.875rem' }}>Select a conversation to start replying</p>
+              </div>
+            ) : (
+              <>
+                {/* Thread header */}
+                <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--cyan)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8125rem', fontWeight: 700, color: 'var(--bg)' }}>
+                    {(activeConvo.username || '?')[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>{activeConvo.username}</p>
+                    <p style={{ margin: 0, fontSize: '0.6875rem', color: 'var(--sub)' }}>User #{activeConvo.user_id}</p>
+                  </div>
+                </div>
+
+                {/* Messages */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {convoMessages.length === 0 && (
+                    <p style={{ color: 'var(--sub)', fontSize: '0.8125rem', textAlign: 'center', marginTop: '2rem' }}>No messages yet</p>
+                  )}
+                  {convoMessages.map((msg, idx) => {
+                    const isMsgFromAdmin = msg.sender_role === 'admin'
+                    return (
+                      <div key={msg.id || idx} style={{ display: 'flex', justifyContent: isMsgFromAdmin ? 'flex-end' : 'flex-start' }}>
+                        <div style={{
+                          maxWidth: '70%', padding: '0.5rem 0.75rem', borderRadius: isMsgFromAdmin ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
+                          background: isMsgFromAdmin ? 'var(--cyan)' : 'var(--surface)',
+                          color: isMsgFromAdmin ? 'var(--bg)' : 'var(--text)',
+                          fontSize: '0.8125rem', lineHeight: 1.45,
+                        }}>
+                          {!isMsgFromAdmin && <p style={{ margin: '0 0 2px', fontSize: '0.625rem', fontWeight: 600, opacity: 0.7 }}>{msg.sender_name || activeConvo.username}</p>}
+                          <p style={{ margin: 0 }}>{msg.message}</p>
+                          <p style={{ margin: '3px 0 0', fontSize: '0.6rem', opacity: 0.65, textAlign: isMsgFromAdmin ? 'right' : 'left' }}>
+                            {msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div ref={convoEndRef} />
+                </div>
+
+                {/* Input */}
+                <div style={{ padding: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem' }}>
+                  <input
+                    value={adminInput}
+                    onChange={e => setAdminInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAdminMessage() } }}
+                    placeholder={`Reply to ${activeConvo.username}…`}
+                    style={{ flex: 1, padding: '0.5625rem 0.75rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', outline: 'none' }}
+                  />
+                  <button onClick={sendAdminMessage} disabled={!adminInput.trim()}
+                    style={{ padding: '0.5rem 1rem', borderRadius: 8, background: adminInput.trim() ? 'var(--cyan)' : 'var(--muted)', color: adminInput.trim() ? 'var(--bg)' : 'var(--sub)', border: 'none', cursor: adminInput.trim() ? 'pointer' : 'default', fontWeight: 600, fontSize: '0.875rem', transition: 'all 0.15s' }}>
+                    Send
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Global accessible modals */}
+      {confirmModal && (
+        <ConfirmModal
+          message={confirmModal.message}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
+      {configEditModal && (
+        <ConfigEditModal
+          configKey={configEditModal.key}
+          currentValue={configEditModal.value}
+          onSave={async (val) => {
+            setConfigEditModal(null)
+            await handleKeyEdit(configEditModal.key, val)
+            await loadConfig()
+          }}
+          onCancel={() => setConfigEditModal(null)}
+        />
       )}
     </div>
   )

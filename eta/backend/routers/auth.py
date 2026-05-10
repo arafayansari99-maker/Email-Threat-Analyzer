@@ -1,8 +1,8 @@
 """
 Authentication router - Registration, login, JWT refresh, 2FA, and session management.
 """
+import logging
 import os
-import re
 import hashlib
 import secrets
 from datetime import datetime, timedelta
@@ -14,26 +14,25 @@ from fastapi.responses import JSONResponse
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import pyotp
-
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import get_db, User, User2FA, LoginAttempt, RefreshToken
 
 # Import notifications service
 from notifications import email_service
-from webhooks import webhook_service
+from security_middleware import get_client_ip  # canonical implementation
+
+logger = logging.getLogger(__name__)
 
 # ── Rate limiter ───────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "dev-only-insecure-key-change-in-production")
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY environment variable is not set. Add it to eta/backend/.env")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60        # 1 hour
 REFRESH_TOKEN_EXPIRE_DAYS   = 30        # 30 days
@@ -44,14 +43,6 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_e
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def get_client_ip(request: Request) -> str:
-    """Return the real client IP, honouring X-Forwarded-For if present."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -185,7 +176,7 @@ def record_login_attempt(db: Session, email: str, ip: str, request: Request, suc
             cutoff = datetime.utcnow() - timedelta(minutes=15)
             failed_count = db.query(LoginAttempt).filter(
                 LoginAttempt.email == email,
-                LoginAttempt.success == False,
+                ~LoginAttempt.success,
                 LoginAttempt.created_at >= cutoff,
             ).count()
             if failed_count >= 3:
@@ -200,7 +191,7 @@ def is_rate_limited(db: Session, email: str, ip: str) -> bool:
     count = db.query(LoginAttempt).filter(
         LoginAttempt.email == email,
         LoginAttempt.ip_address == ip,
-        LoginAttempt.success == False,
+        ~LoginAttempt.success,
         LoginAttempt.created_at >= cutoff,
     ).count()
     return count >= 5
@@ -252,7 +243,7 @@ def check_account_status(
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserCreate, db: Session = Depends(get_db)):
+def register(request: Request, response: Response, user_data: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(
         (User.username == user_data.username) | (User.email == user_data.email)
     ).first()
@@ -277,6 +268,7 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
 
     access_token = create_access_token(data={"sub": str(new_user.id)})
+    _set_refresh_cookie(response, new_user, request, db)
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -284,9 +276,38 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     }
 
 
+def _set_refresh_cookie(response: Response, user: User, request: Request, db: Session):
+    """Create a refresh token record and write the httpOnly cookie onto response."""
+    raw_token = generate_refresh_token()
+    token_hash = hash_token(raw_token)
+    expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    ip = get_client_ip(request)
+    rt = RefreshToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        device_info=request.headers.get("user-agent", "")[:255],
+        ip_address=ip,
+        user_agent=request.headers.get("user-agent", "")[:255],
+        is_active=True,
+        expires_at=expires_at,
+    )
+    db.add(rt)
+    db.commit()
+    response.set_cookie(
+        key="eta_refresh_token",
+        value=raw_token,
+        httponly=True,
+        secure=os.environ.get("ENVIRONMENT") == "production",
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/",
+    )
+
+
 @router.post("/login", response_model=Token)
 def login(
     request: Request,
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
@@ -333,7 +354,7 @@ def login(
 
     # ── 2FA check for admin accounts ─────────────────────────────────────────
     if user.role in ("admin", "superadmin", "soc_analyst"):
-        two_fa = db.query(User2FA).filter(User2FA.user_id == user.id, User2FA.is_enabled == True).first()
+        two_fa = db.query(User2FA).filter(User2FA.user_id == user.id, User2FA.is_enabled).first()
         if two_fa:
             # Return a partial token hint so the client knows to ask for 2FA
             partial = create_access_token(
@@ -356,6 +377,8 @@ def login(
             })
 
     access_token = create_access_token(data={"sub": str(user.id)})
+    # Set refresh cookie atomically with login — no separate /sessions call needed
+    _set_refresh_cookie(response, user, request, db)
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -388,15 +411,15 @@ def verify_2fa(
 
     record_login_attempt(db, user.email, ip, request, success=True)
 
-    two_fa = db.query(User2FA).filter(User2FA.user_id == user.id, User2FA.is_enabled == True).first()
+    two_fa = db.query(User2FA).filter(User2FA.user_id == user.id, User2FA.is_enabled).first()
     if not two_fa or not two_fa.secret:
         raise HTTPException(status_code=400, detail="2FA not configured for this user")
 
-    # Support backup codes
+    # Support backup codes — codes are stored as SHA-256 hashes, never plaintext
     backup_codes = two_fa.backup_codes or []
-    if body.code in backup_codes:
-        # Consume the backup code
-        backup_codes.remove(body.code)
+    code_hash = hashlib.sha256(body.code.encode()).hexdigest()
+    if code_hash in backup_codes:
+        backup_codes.remove(code_hash)
         two_fa.backup_codes = backup_codes
         db.commit()
     else:
@@ -428,7 +451,7 @@ def refresh_token(
     token_hash = hash_token(raw_token)
     rt = db.query(RefreshToken).filter(
         RefreshToken.token_hash == token_hash,
-        RefreshToken.is_active == True,
+        RefreshToken.is_active,
     ).first()
 
     if not rt or rt.expires_at < datetime.utcnow():
@@ -627,7 +650,7 @@ def list_sessions(
     """List all active sessions for the current user."""
     sessions = db.query(RefreshToken).filter(
         RefreshToken.user_id == current_user.id,
-        RefreshToken.is_active == True,
+        RefreshToken.is_active,
         RefreshToken.expires_at > datetime.utcnow(),
     ).order_by(RefreshToken.last_used_at.desc().nullsfirst(), RefreshToken.created_at.desc()).all()
 
@@ -671,7 +694,7 @@ def revoke_all_sessions(
     """Revoke all sessions for the current user."""
     db.query(RefreshToken).filter(
         RefreshToken.user_id == current_user.id,
-        RefreshToken.is_active == True,
+        RefreshToken.is_active,
     ).update({"is_active": False})
     db.commit()
     return Response(status_code=204)
@@ -684,7 +707,7 @@ class PasswordResetRequest(BaseModel):
 
 class PasswordResetConfirm(BaseModel):
     token: str
-    new_password: str
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class PasswordResetResponse(BaseModel):
@@ -713,10 +736,16 @@ def request_password_reset(
         db.add(reset_token)
         db.commit()
 
-        # In production, send email here
-        # For now, log the reset URL (in production, integrate with email service)
-        reset_url = f"/password-reset?token={token}&email={body.email}"
-        print(f"[EMAIL] Password reset for {body.email}: {reset_url}")
+        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        reset_url = f"{frontend_url}/reset-password?token={token}"
+        try:
+            email_service.send_password_reset(
+                email=user.email,
+                username=user.username,
+                reset_url=reset_url,
+            )
+        except Exception:
+            logger.warning("Failed to send password reset email to %s", body.email)
 
     # Always return success to prevent email enumeration
     return PasswordResetResponse(
@@ -736,7 +765,7 @@ def confirm_password_reset(
     # Find valid reset token
     reset_token = db.query(PasswordResetToken).filter(
         PasswordResetToken.token_hash == hash_token(body.token),
-        PasswordResetToken.used_at == None,
+        PasswordResetToken.used_at.is_(None),
         PasswordResetToken.expires_at > datetime.utcnow(),
     ).first()
 
@@ -756,7 +785,7 @@ def confirm_password_reset(
     # Revoke all existing sessions for security
     db.query(RefreshToken).filter(
         RefreshToken.user_id == user.id,
-        RefreshToken.is_active == True,
+        RefreshToken.is_active,
     ).update({"is_active": False})
 
     db.commit()

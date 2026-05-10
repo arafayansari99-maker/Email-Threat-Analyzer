@@ -4,9 +4,11 @@ import { AuthProvider, useAuth } from './hooks/useAuth'
 import { ThemeProvider } from './hooks/useTheme'
 import { ToastProvider } from './hooks/useToast'
 import Layout from './components/layout/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
 import SearchBar from './components/ui/SearchBar'
 import SupportChat from './components/ui/SupportChat'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useIsMobile } from './hooks/useIsMobile'
 import Login from './pages/Login'
 import CheckStatus from './pages/CheckStatus'
 import Dashboard from './pages/Dashboard'
@@ -18,10 +20,8 @@ const History = lazy(() => import('./pages/History').then(m => ({ default: m.def
 const Analytics = lazy(() => import('./pages/Analytics').then(m => ({ default: m.default })))
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.default })))
 const UserManagement = lazy(() => import('./pages/UserManagement').then(m => ({ default: m.default })))
-const Privacy = lazy(() => import('./pages/Privacy').then(m => ({ default: m.default })))
 const Report = lazy(() => import('./pages/Report').then(m => ({ default: m.default })))
 const IOCGraph = lazy(() => import('./pages/IOCGraph').then(m => ({ default: m.default })))
-const Collaborate = lazy(() => import('./pages/Collaborate').then(m => ({ default: m.default })))
 const Admin = lazy(() => import('./pages/Admin').then(m => ({ default: m.default })))
 const Sessions = lazy(() => import('./pages/Sessions').then(m => ({ default: m.default })))
 const News = lazy(() => import('./pages/News').then(m => ({ default: m.default })))
@@ -90,8 +90,10 @@ function ProtectedRoute({ children }) {
 }
 
 function AppShell() {
+  const { user } = useAuth()
   const [searchOpen, setSearchOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
+  const isMobile = useIsMobile()
   const openSearch  = useCallback(() => setSearchOpen(true),  [])
   const closeSearch = useCallback(() => setSearchOpen(false), [])
 
@@ -109,61 +111,65 @@ function AppShell() {
     <>
       {searchOpen && <SearchBar onClose={closeSearch} />}
 
-      {/* Support Chat FAB - rendered at root level */}
-      <button
-        className={`support-fab ${chatOpen ? 'open' : ''}`}
-        onClick={() => setChatOpen(!chatOpen)}
-        title="Get Support"
-        aria-label="Open support chat"
-        style={{
-          position: 'fixed',
-          bottom: '1.5rem',
-          right: '1.5rem',
-          zIndex: 9999,
-        }}
-      >
-        💬
-      </button>
-
-      {/* Support Chat Panel */}
-      {chatOpen && (
-        <div
-          className="support-chat-wrapper"
-          style={{
-            position: 'fixed',
-            bottom: '5.5rem',
-            right: '1.5rem',
-            zIndex: 9998,
-          }}
-        >
-          <SupportChat onClose={() => setChatOpen(false)} />
-        </div>
+      {/* Support Chat FAB — only shown to authenticated users, never on login/register */}
+      {user && (
+        <>
+          <button
+            className={`support-fab ${chatOpen ? 'open' : ''}`}
+            onClick={() => setChatOpen(!chatOpen)}
+            title={chatOpen ? 'Close support' : 'Get Support'}
+            aria-label="Open support chat"
+            style={{ position: 'fixed', bottom: isMobile ? '5rem' : '1.5rem', right: '1.5rem', zIndex: 9999 }}
+          >
+            {chatOpen ? (
+              /* Close / X icon */
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            ) : (
+              /* Headset / support icon */
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/>
+                <path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+              </svg>
+            )}
+          </button>
+          {chatOpen && (
+            <div
+              className="support-chat-wrapper"
+              style={{ position: 'fixed', bottom: isMobile ? '8.5rem' : '5.5rem', right: '1.5rem', zIndex: 9998 }}
+            >
+              <SupportChat onClose={() => setChatOpen(false)} />
+            </div>
+          )}
+        </>
       )}
 
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/check-status" element={<CheckStatus />} />
-          <Route path="/news" element={<ProtectedRoute><News /></ProtectedRoute>} />
-          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/analyze" element={<ProtectedRoute><Analyze /></ProtectedRoute>} />
-          <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
-          <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-          <Route path="/privacy" element={<ProtectedRoute><Privacy /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute><Report /></ProtectedRoute>} />
-          <Route path="/reports/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
-          <Route path="/graph" element={<ProtectedRoute><IOCGraph /></ProtectedRoute>} />
-          <Route path="/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
-          <Route path="/collaborate" element={<ProtectedRoute><Collaborate /></ProtectedRoute>} />
-          <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-          <Route path="/sessions" element={<ProtectedRoute><Sessions /></ProtectedRoute>} />
-          <Route path="/api-docs" element={<ProtectedRoute><APIDocumentation /></ProtectedRoute>} />
-          <Route path="/" element={<Navigate to="/dashboard" />} />
-          <Route path="*" element={<Navigate to="/dashboard" />} />
-        </Routes>
-      </Suspense>
+      <ErrorBoundary>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/check-status" element={<CheckStatus />} />
+            <Route path="/news" element={<ProtectedRoute><News /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/analyze" element={<ProtectedRoute><Analyze /></ProtectedRoute>} />
+            <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><Report /></ProtectedRoute>} />
+            <Route path="/reports/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
+            <Route path="/graph" element={<ProtectedRoute><IOCGraph /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+            <Route path="/sessions" element={<ProtectedRoute><Sessions /></ProtectedRoute>} />
+            <Route path="/api-docs" element={<ProtectedRoute><APIDocumentation /></ProtectedRoute>} />
+            <Route path="/" element={<Navigate to="/dashboard" />} />
+            <Route path="*" element={<Navigate to="/dashboard" />} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
     </>
   )
 }

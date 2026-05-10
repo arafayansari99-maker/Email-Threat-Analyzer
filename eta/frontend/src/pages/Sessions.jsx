@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useIsMobile } from '../hooks/useIsMobile'
 import { getSessions, revokeSession, revokeAllSessions, get2FAStatus, setup2FA, enable2FA, disable2FA } from '../services/api'
 
 function formatDate(d) {
@@ -9,6 +10,7 @@ function formatDate(d) {
 }
 
 function SessionRow({ session, onRevoke }) {
+  const isMobile = useIsMobile()
   const [revoking, setRevoking] = useState(false)
   const handleRevoke = async () => {
     setRevoking(true)
@@ -18,7 +20,7 @@ function SessionRow({ session, onRevoke }) {
   return (
     <tr style={{ borderBottom: '1px solid #1E2D40' }}>
       <td style={{ padding: '0.75rem 1rem', color: '#94A3B8', fontSize: '0.875rem' }}>{session.ip_address || '—'}</td>
-      <td style={{ padding: '0.75rem 1rem', color: '#94A3B8', fontSize: '0.875rem' }}>
+      <td style={{ padding: '0.75rem 1rem', color: '#94A3B8', fontSize: '0.875rem', maxWidth: isMobile ? '120px' : '60px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {session.device_info ? session.device_info.slice(0, 60) + (session.device_info.length > 60 ? '…' : '') : '—'}
       </td>
       <td style={{ padding: '0.75rem 1rem', color: '#94A3B8', fontSize: '0.875rem' }}>{formatDate(session.created_at)}</td>
@@ -34,6 +36,7 @@ function SessionRow({ session, onRevoke }) {
 }
 
 export default function Sessions() {
+  const isMobile = useIsMobile()
   const { user } = useAuth()
   const navigate = useNavigate()
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
@@ -107,13 +110,13 @@ export default function Sessions() {
   })
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '900px', margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? '1rem' : '2rem', maxWidth: '900px', margin: '0 auto' }}>
       <h1 style={{ color: 'var(--text)', fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '2rem' }}>Security</h1>
 
       {alert && <div style={alertStyle(alert.type)}>{alert.msg}</div>}
 
       {/* ── Active Sessions ── */}
-      <section style={{ background: 'var(--card)', border: '1px solid #1E2D40', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
+      <section style={{ background: 'var(--card)', border: '1px solid #1E2D40', borderRadius: '12px', padding: isMobile ? '1rem' : '1.5rem', marginBottom: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ color: 'var(--text)', fontSize: '1.1rem', fontWeight: 600 }}>Active Sessions</h2>
           {sessions.length > 0 && (
@@ -148,7 +151,7 @@ export default function Sessions() {
 
       {/* ── 2FA (admin only) ── */}
       {isAdmin && (
-        <section style={{ background: 'var(--card)', border: '1px solid #1E2D40', borderRadius: '12px', padding: '1.5rem' }}>
+        <section style={{ background: 'var(--card)', border: '1px solid #1E2D40', borderRadius: '12px', padding: isMobile ? '1rem' : '1.5rem' }}>
           <h2 style={{ color: 'var(--text)', fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem' }}>Two-Factor Authentication</h2>
 
           {twoFA.step === 'idle' && (

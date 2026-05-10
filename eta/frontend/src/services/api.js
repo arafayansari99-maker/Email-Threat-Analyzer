@@ -1,69 +1,131 @@
 import axios from 'axios'
 
-// Use proxy in dev (empty = Vite handles routing), full URL when VITE_API_URL is set (production)
+// The frontend only uses a backend URL here. No secret API keys should be stored in client code.
+// In production, set VITE_API_URL to the backend host; in dev Vite proxy sends /api requests to localhost:8000.
 const BASE = import.meta.env.VITE_API_URL || ''
 
-// Simple in-memory cache for API responses
+// ── In-memory token storage ────────────────────────────────────────────────────
+// Storing the JWT in localStorage exposes it to XSS. Keep it in a JS module
+// variable instead — it survives navigation but is cleared on page refresh,
+// at which point the httpOnly refresh-token cookie silently re-issues it.
+let _token = null
+
+export const setToken = (t) => {
+  _token = t
+  if (t) api.defaults.headers.common['Authorization'] = `Bearer ${t}`
+  else   delete api.defaults.headers.common['Authorization']
+}
+export const getToken = () => _token
+
+// ── Simple in-memory cache for API responses ───────────────────────────────────
 const cache = new Map()
-const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+const CACHE_DURATION = 5 * 60 * 1000
 
-// Request timeout - responsive within 2 seconds
-const API_TIMEOUT = 2000 // ms - fast but reliable
+const inflight = new Map()
 
-// Clear expired cache entries periodically
-setInterval(() => {
+const API_TIMEOUT = 15000
+
+let lastPrune = Date.now()
+function pruneCache() {
   const now = Date.now()
+  if (now - lastPrune < 60000) return
+  lastPrune = now
   for (const [key, value] of cache.entries()) {
-    if (now - value.timestamp > CACHE_DURATION) {
-      cache.delete(key)
-    }
+    if (now - value.timestamp > CACHE_DURATION) cache.delete(key)
   }
-}, 60000) // Check every minute
+}
 
 const api = axios.create({
   baseURL: BASE,
-  timeout: API_TIMEOUT, // Stricter timeout for faster response
-  // Don't set Content-Type for FormData - browser sets it with boundary
+  timeout: API_TIMEOUT,
+  withCredentials: true,  // send httpOnly refresh-token cookie on every request
 })
 
-// Request interceptor
-api.interceptors.request.use(cfg => {
-  const t = localStorage.getItem('eta_token')
-  if (t) cfg.headers.Authorization = `Bearer ${t}`
-  return cfg
-})
+// ── Request interceptor ────────────────────────────────────────────────────────
+// Token is set directly on api.defaults.headers by setToken(); no localStorage read needed.
+api.interceptors.request.use(cfg => cfg)
 
-// Response interceptor with cache
+// ── 401 interceptor with cookie-based silent refresh ──────────────────────────
+// When a request returns 401 the interceptor tries POST /api/auth/refresh once.
+// If the refresh cookie is valid a new access token is issued, stored in memory,
+// and the original request is retried transparently.
+let _refreshing = false
+let _waiters    = []
+
 api.interceptors.response.use(
   r => r,
-  err => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('eta_token')
+  async err => {
+    const orig = err.config
+    if (err.response?.status !== 401 || orig._retry) {
+      return Promise.reject(err)
+    }
+
+    // Queue concurrent 401s while a refresh is in flight
+    if (_refreshing) {
+      return new Promise((resolve, reject) => _waiters.push({ resolve, reject }))
+        .then(token => {
+          orig.headers = { ...orig.headers, Authorization: `Bearer ${token}` }
+          return api(orig)
+        })
+    }
+
+    orig._retry  = true
+    _refreshing  = true
+
+    try {
+      // Use base axios (no interceptors) to avoid infinite retry loop
+      const { data } = await axios.post(
+        `${BASE}/api/auth/refresh`,
+        {},
+        { withCredentials: true, timeout: API_TIMEOUT }
+      )
+      setToken(data.access_token)
+      _waiters.forEach(w => w.resolve(data.access_token))
+      _waiters = []
+      orig.headers = { ...orig.headers, Authorization: `Bearer ${data.access_token}` }
+      return api(orig)
+    } catch {
+      setToken(null)
+      _waiters.forEach(w => w.reject())
+      _waiters = []
       localStorage.removeItem('eta_user')
       if (!window.location.pathname.includes('/login')) {
         window.location.href = '/login'
       }
+      return Promise.reject(err)
+    } finally {
+      _refreshing = false
     }
-    return Promise.reject(err)
   }
 )
 
-// Cached GET request
+// ── Cached GET with in-flight deduplication ────────────────────────────────────
 export const cachedGet = async (url, options = {}) => {
   const { cacheKey, ttl = CACHE_DURATION, ...params } = options
-  const key = cacheKey || url + JSON.stringify(params)
+  const key = cacheKey || (url + (Object.keys(params).length ? JSON.stringify(params) : ''))
+
+  pruneCache()
 
   const cached = cache.get(key)
-  if (cached && Date.now() - cached.timestamp < ttl) {
-    return cached.data
-  }
+  if (cached && Date.now() - cached.timestamp < ttl) return cached.data
 
-  const response = await api.get(url, { params })
-  cache.set(key, { data: response.data, timestamp: Date.now() })
-  return response.data
+  if (inflight.has(key)) return inflight.get(key)
+
+  const promise = api.get(url, { params })
+    .then(response => {
+      cache.set(key, { data: response.data, timestamp: Date.now() })
+      inflight.delete(key)
+      return response.data
+    })
+    .catch(err => {
+      inflight.delete(key)
+      throw err
+    })
+
+  inflight.set(key, promise)
+  return promise
 }
 
-// Clear specific cache
 export const clearCache = (pattern) => {
   if (pattern) {
     for (const key of cache.keys()) {
@@ -107,7 +169,6 @@ export const deleteScan   = id   => api.delete(`/api/history/scan/${id}`)
 export const downloadJSON = id   => api.get(`/api/reports/report/${id}/json`, { responseType: 'blob' })
 export const generatePDF  = id   => api.post(`/api/reports/report/${id}/pdf`, {}, { responseType: 'blob', timeout: 60000 })
 
-// Use /api/auth instead of /auth for all endpoints
 export const getProfile = () => api.get('/api/auth/me')
 export const updateProfile = body => api.patch('/api/auth/profile', body)
 
@@ -116,7 +177,6 @@ export const getSessions       = () => api.get('/api/auth/sessions')
 export const revokeSession     = id => api.delete(`/api/auth/sessions/${id}`)
 export const revokeAllSessions  = () => api.post('/api/auth/sessions/revoke-all')
 
-// Account status check (no auth required)
 export const checkAccountStatus = email => api.post('/api/auth/check-status', { email })
 
 // 2FA
@@ -171,5 +231,40 @@ export const exportAdminData = (dataType, format) => api.get(`/api/admin/export/
 // Dashboard widget order
 export const getWidgetOrder = () => api.get('/api/settings/widget-order')
 export const saveWidgetOrder = order => api.post('/api/settings/widget-order', { order })
+
+// Privacy & Data
+export const getPrivacySettings = () => api.get('/api/privacy/user/privacy-settings')
+export const savePrivacySettings = ({ data_retention_days, allow_analytics, auto_delete, tier2_consent }) =>
+  api.post('/api/privacy/user/privacy-settings', null, {
+    params: { data_retention_days, allow_analytics, auto_delete, tier2_consent },
+  })
+export const triggerCleanup = () => api.post('/api/privacy/auto-cleanup')
+
+// Notifications
+export const getNotifications = () => api.get('/api/notifications')
+export const getNotificationUnreadCount = () => api.get('/api/notifications/unread-count')
+export const markAllNotificationsRead = () => api.post('/api/notifications/mark-read')
+export const markNotificationRead = (id) => api.patch(`/api/notifications/${id}/read`)
+
+// Chat (REST history)
+export const getChatMessages = () => api.get('/api/chat/messages')
+export const markChatRead = () => api.post('/api/chat/messages/read')
+export const getAdminConversations = () => api.get('/api/chat/admin/conversations')
+export const getAdminUserMessages = (userId) => api.get(`/api/chat/admin/messages/${userId}`)
+
+// Build WebSocket URL for chat (strips /api prefix, uses ws:// scheme)
+export const getChatWsUrl = (role) => {
+  const base = (import.meta.env.VITE_API_URL || window.location.origin).replace(/^http/, 'ws')
+  const token = getToken()
+  return `${base}/api/chat/ws/${role}?token=${encodeURIComponent(token || '')}`
+}
+
+// IMAP accounts
+export const getImapAccounts    = ()          => api.get('/api/imap/accounts')
+export const addImapAccount     = data        => api.post('/api/imap/accounts', data)
+export const deleteImapAccount  = id          => api.delete(`/api/imap/accounts/${id}`)
+export const syncImapAccount    = id          => api.post(`/api/imap/accounts/${id}/sync`, {}, { timeout: 120000 })
+export const syncAllImap        = ()          => api.post('/api/imap/sync-all', {}, { timeout: 120000 })
+export const getImapFolders     = id          => api.get(`/api/imap/accounts/${id}/folders`)
 
 export default api
