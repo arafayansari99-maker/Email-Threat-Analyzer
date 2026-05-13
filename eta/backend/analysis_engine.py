@@ -370,8 +370,10 @@ def parse_email_bytes(content: bytes, filename: str = "email.eml") -> Dict[str, 
     """Parse raw email bytes into structured dict."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
+
     # .msg is Outlook OLE binary — try extract-msg, fall back to text extraction
     if ext == "msg":
+
         try:
             import extract_msg  # type: ignore[reportMissingImports]
             import io as _io
@@ -420,11 +422,13 @@ def parse_email_bytes(content: bytes, filename: str = "email.eml") -> Dict[str, 
         "sender_name": "", "recipient": "", "reply_to": "", "return_path": "",
         "date": "", "message_id": "", "x_mailer": "",
         "body_text": "", "body_html": "",
+        "attachment_text": "",
         "spf": None, "dkim": None, "dmarc": None,
         "received_headers": [],
         "extracted_ips": [],
         "urls": [], "domains": [], "attachments": [], "iocs": [],
     }
+
     try:
         msg = message_from_bytes(content, policy=email.policy.default)
     except Exception:
@@ -474,10 +478,26 @@ def parse_email_bytes(content: bytes, filename: str = "email.eml") -> Dict[str, 
             ct = part.get_content_type()
             disp = str(part.get("Content-Disposition", ""))
             if "attachment" in disp:
+                # Extract and store attachment metadata + extracted text for keyword/ML matching
                 att = _parse_attachment(part)
                 if att:
                     result["attachments"].append(att)
+
+                # Decode attachment payload bytes and extract text (PDF/CSV/JSON/XML/HTML/log/md/etc.)
+                try:
+                    filename = _decode_header(part.get_filename() or "") or "attachment"
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        extracted = _extract_text_from_file(payload, filename)
+                        if extracted:
+                            result["attachment_text"] += extracted + "\n"
+                            # Optionally attach extracted text to the attachment object (truncate by extractor)
+                            if att is not None:
+                                att["extracted_text"] = extracted[:MAX_TEXT_EXTRACT_SIZE]
+                except Exception:
+                    pass
             elif ct == "text/plain":
+
                 try:
                     b = part.get_payload(decode=True)
                     if b:
@@ -1112,8 +1132,10 @@ def extract_ml_features(parsed: Dict):
     The same extraction is used at both training time and inference time.
     """
     subject     = (parsed.get("subject") or "").lower()
-    body        = ((parsed.get("body_text") or "") + (parsed.get("body_html") or "")).lower()
+    attachment_text = (parsed.get("attachment_text") or "")
+    body        = ((parsed.get("body_text") or "") + (parsed.get("body_html") or "") + attachment_text).lower()
     urls        = parsed.get("urls") or []
+
     atts        = parsed.get("attachments") or []
     domain      = parsed.get("sender_domain") or ""
     sender      = parsed.get("sender_email") or ""
@@ -1540,14 +1562,42 @@ def calculate_risk(
         header_ioc_boost = 7.0
 
     # ── Weighted aggregation ───────────────────────────────────────────────────
-    # DistilBERT always active: XGBoost 25%, Semantic 15%, Headers 18%, URLs 27%, Attach 15%
+    # Updated weights: ML increased to 40% (was 25%) to properly weight sophisticated ML detection
+    # Headers 15%, URLs 25%, Attachments 10%, ML 40%, Semantic 10%
     raw = (
-        (header_score + header_ioc_boost)          * 0.18 +
-        url_score                                  * 0.27 +
-        attach_score                               * 0.15 +
-        ml.get("phishing_probability", 0) * 100   * 0.25 +
-        sem_prob                             * 100 * 0.15
+        (header_score + header_ioc_boost)          * 0.15 +
+        url_score                                  * 0.25 +
+        attach_score                               * 0.10 +
+        ml.get("phishing_probability", 0) * 100   * 0.40 +
+        sem_prob                             * 100 * 0.10
     )
+
+    # ── Scam/BEC detection boost (Option 2) ───────────────────────────────────
+    # Detect classic scam patterns: money transfer + urgency + authority requests
+    # These are hard to detect via URLs/attachments alone
+    scam_boost = 0
+    ml_keywords = ml.get("suspicious_keywords_found", {})
+    critical_kw = set(ml_keywords.get("critical", []))
+    high_kw = set(ml_keywords.get("high", []))
+    
+    # Keyword groups for pattern detection
+    bec_money_keywords = {"wire transfer", "bank details", "account number", "routing number", 
+                          "urgent payment", "payment release", "funds transfer", "invoice", "urgent"}
+    authority_keywords = {"ceo", "cfo", "director", "executive", "president", "confidential", "private"}
+    scam_keywords = {"inheritance", "prize", "winner", "lottery", "gift", "congratulations", "claim", 
+                     "diamond", "gold", "treasure", "fund", "assistance"}
+    
+    # Check for scam patterns
+    has_money = bool(critical_kw & bec_money_keywords or high_kw & bec_money_keywords)
+    has_authority = bool(critical_kw & authority_keywords or high_kw & authority_keywords)
+    has_scam = bool(critical_kw & scam_keywords or high_kw & scam_keywords)
+    has_urgency = bool(critical_kw & {"urgency", "urgent"} or high_kw & {"urgency", "urgent"})
+    
+    # Apply scam boost: inheritance/lottery scams OR BEC/wire fraud patterns
+    if (has_urgency and has_scam):
+        scam_boost = 18  # Gift/inheritance/lottery scams detected
+    elif (has_money or has_authority) and has_urgency:
+        scam_boost = 22  # BEC/wire fraud patterns detected
 
     # Critical IOC bonus: any critical-tier API hit adds a flat boost
     critical_bonus = 0
@@ -1566,7 +1616,7 @@ def calculate_risk(
     ml_prob = ml.get("phishing_probability", 0)
     ml_bonus = (ml_prob - 0.80) * 100 if ml_prob > 0.80 else 0
 
-    final = max(0, min(100, raw + critical_bonus + ml_bonus + threat_boost))
+    final = max(0, min(100, raw + scam_boost + critical_bonus + ml_bonus + threat_boost))
 
     malicious_score  = _THRESHOLDS.get("malicious_score",  50)
     suspicious_score = _THRESHOLDS.get("suspicious_score", 30)
@@ -1580,13 +1630,15 @@ def calculate_risk(
     recs = _build_recs(verdict, final, header, url, attachment, ml)
 
     confidence_bonus = round(ml_bonus, 1) if ml_bonus > 0 else None
+    scam_boost_display = round(scam_boost, 1) if scam_boost > 0 else None
     breakdown = {
-        "header":           round((header_score + header_ioc_boost) * 0.20, 1),
+        "header":           round((header_score + header_ioc_boost) * 0.15, 1),
         "url":              round(url_score * 0.25, 1),
-        "attachment":       round(attach_score * (0.15 if sem_active else 0.20), 1),
-        "ml":               round(ml_prob * 100 * (0.25 if sem_active else 0.35), 1),
+        "attachment":       round(attach_score * 0.10, 1),
+        "ml":               round(ml_prob * 100 * 0.40, 1),
         "confidence_bonus": confidence_bonus,
-        "semantic":         round(sem_prob * 100 * 0.15, 1) if sem_active else None,
+        "semantic":         round(sem_prob * 100 * 0.10, 1) if sem_active else None,
+        "scam_boost":       scam_boost_display,
         "ioc_boost":        round(critical_bonus, 1) if critical_bonus > 0 else None,
         "ip_intel_score":   ip_ioc_score if ip_ioc_score > 0 else None,
         "domain_intel_score": domain_ioc_score if domain_ioc_score > 0 else None,
@@ -1820,23 +1872,26 @@ def _build_rule_based_assessment(
     attack_types = _detect_attack_type(body_text, subject, parsed.get("attachments", []), ml_r)
     primary_attack = attack_types[0] if attack_types else "Uncategorized Threat"
 
-    # Severity adjectives
+    # Severity adjectives (must be consistent with the final risk verdict)
     risk_score = (risk_r.get("risk_score", 0) * 100) if risk_r else 0
-    if risk_score >= 70:
+    final_verdict = (risk_r.get("verdict", "unknown") if risk_r else "unknown").lower()
+
+    if final_verdict == "malicious":
         severity = "high-severity"
         risk_adj = "a likely malicious"
-    elif risk_score >= 40:
+    elif final_verdict == "suspicious":
         severity = "suspicious"
         risk_adj = "a suspicious"
     else:
         severity = "low-risk"
         risk_adj = "a mostly safe"
 
-    verdict_label = (risk_r.get("verdict", "unknown") if risk_r else "unknown").upper()
+    verdict_label = final_verdict.upper() if final_verdict else "UNKNOWN"
     ml_prob = ml_r.get("phishing_probability", 0)
     url_mal = url_r.get("malicious", 0) if url_r else 0
     att_mal = len((attach_r or {}).get("malicious", []))
 
+    # Avoid wording that implies maliciousness when the final verdict is SAFE
     parts = [f"Classified as {risk_adj} {severity} email ({verdict_label}, {int(ml_prob * 100)}% ML phishing probability)."]
     if attack_types:
         parts.append(f"Primary threat: {primary_attack}.")

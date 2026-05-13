@@ -101,6 +101,21 @@ export default function UserManagement() {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
+            onClick={loadUsers}
+            disabled={loading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.375rem',
+              padding: '0.5rem 1rem', borderRadius: 8,
+              border: '1px solid var(--border)', background: 'var(--surface)',
+              color: loading ? 'var(--sub)' : 'var(--text)',
+              fontSize: '0.8125rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: loading ? 'rotate(360deg)' : 'none' }}>↻</span>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <button
             onClick={() => setShowModal(true)}
             style={{
               padding: '0.625rem 1rem',

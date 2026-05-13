@@ -223,9 +223,18 @@ export default function Report() {
     return matchesSearch && matchesFileType
   })
 
-  const getColor = (v) => ({ malicious: '#EF4444', suspicious: '#F59E0B', safe: '#10B981', unknown: '#64748B' }[v] || '#64748B')
+  const getColor = (v) => ({ malicious: '#EF4444', suspicious: '#F59E0B', safe: '#10B981', unknown: '#64748B', trusted: '#10B981' }[v] || '#64748B')
 
   const getIOCStatus = (iocObj) => {
+    // Normalize verdict labels from backend so we render safe/suspicious/malicious consistently
+    const normalizeVerdict = (v) => {
+      const vv = (v || '').toString().trim().toLowerCase()
+      if (!vv) return ''
+      if (vv === 'trusted' || vv === 'benign' || vv === 'safe' || vv === 'low') return 'safe'
+      if (vv === 'suspicious' || vv === 'medium' || vv === 'warning') return 'suspicious'
+      if (vv === 'malicious' || vv === 'high' || vv === 'danger') return 'malicious'
+      return vv
+    }
     const safeString = (value) => (value || '').toString().trim()
     const normalizeUrl = (url) => safeString(url).replace(/\/+$|\s+/g, '').toLowerCase()
     const statusFromVerdict = (verdict, score) => {
@@ -245,7 +254,14 @@ export default function Report() {
     const value = safeString(iocObj.value || iocObj)
     const type = safeString(iocObj.type).toLowerCase()
     if (iocObj.risk) {
-      return safeString(iocObj.risk).toLowerCase()
+      return normalizeVerdict(safeString(iocObj.risk))
+    }
+    // backend may provide verdict/label directly
+    if (iocObj.verdict) {
+      return normalizeVerdict(iocObj.verdict)
+    }
+    if (iocObj.status) {
+      return normalizeVerdict(iocObj.status)
     }
 
     const urls = report?.url_analysis?.urls || []
@@ -539,17 +555,27 @@ export default function Report() {
               {report && (
                 <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.5rem', marginBottom: '1rem' }}>
                   <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>Analysis Summary</h3>
-                  <p style={{ color: '#6B7280', fontSize: '0.875rem', lineHeight: 1.6 }}>
-                    {report.analysis_summary || report.summary || (
-                      // Generate fallback summary from available data
-                      `Verdict: ${report.verdict?.toUpperCase() || 'UNKNOWN'}` +
-                      ` | Risk Score: ${report.risk_score || 0}/100` +
-                      (report.risk_score != null
-                        ? ` | Phishing Probability: ${report.risk_score.toFixed(0)}%`
-                        : '') +
-                      ` | URLs: ${report.url_count || 0} | Attachments: ${report.attach_count || 0}`
-                    )}
-                  </p>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                      <tbody>
+                        {[
+                          ['Verdict',        report.verdict ? report.verdict.toUpperCase() : 'UNKNOWN'],
+                          ['Risk Score',     `${report.risk_score ?? 0} / 100`],
+                          ['Phishing Prob.', report.risk_score != null ? `${(report.risk_score).toFixed(1)}%` : '—'],
+                          ['URLs Detected',  report.url_count ?? 0],
+                          ['Attachments',   report.attach_count ?? 0],
+                          ['Scan ID',        selectedScan.scan_id ?? '—'],
+                          ['Scanned At',     selectedScan.created_at ? new Date(selectedScan.created_at).toLocaleString() : '—'],
+                          ['Source',        selectedScan.source === 'imap' ? 'IMAP / Email Account' : 'File Upload'],
+                        ].map(([label, value]) => (
+                          <tr key={label} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.5rem 0.75rem 0.5rem 0', color: '#64748B', whiteSpace: 'nowrap', width: '40%' }}>{label}</td>
+                            <td style={{ padding: '0.5rem 0', color: 'var(--text)', fontWeight: 500 }}>{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
@@ -639,7 +665,7 @@ export default function Report() {
                           <span style={{ color: 'var(--sub)', fontSize: '0.8125rem' }}>
                             XGBoost (structural features)
                             <span style={{ color: 'var(--sub)', fontSize: '0.6875rem', marginLeft: '0.5rem' }}>
-                              {report.semantic_analysis?.method === 'distilbert' ? '25% weight' : '35% weight'}
+                              {['distilbert', 'roberta'].includes(report.semantic_analysis?.method) ? '25% weight' : '35% weight'}
                             </span>
                           </span>
                           <span style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 600 }}>
@@ -657,15 +683,17 @@ export default function Report() {
                       <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                           <span style={{ color: 'var(--sub)', fontSize: '0.8125rem' }}>
-                            {report.semantic_analysis.method === 'distilbert'
+                            {report.semantic_analysis.method === 'roberta'
+                              ? 'RoBERTa (semantic NLP)'
+                              : report.semantic_analysis.method === 'distilbert'
                               ? 'DistilBERT (semantic NLP)'
                               : 'Semantic NLP'}
                             <span style={{ color: 'var(--sub)', fontSize: '0.6875rem', marginLeft: '0.5rem' }}>
-                              {report.semantic_analysis.method === 'distilbert' ? '15% weight' : 'unavailable'}
+                              {['distilbert', 'roberta'].includes(report.semantic_analysis.method) ? '15% weight' : 'unavailable'}
                             </span>
                           </span>
                           <span style={{ color: 'var(--text)', fontSize: '0.8125rem', fontWeight: 600 }}>
-                            {report.semantic_analysis.method === 'distilbert'
+                            {['distilbert', 'roberta'].includes(report.semantic_analysis.method)
                               ? `${((report.semantic_analysis.semantic_prob ?? 0) * 100).toFixed(1)}%`
                               : '—'}
                           </span>
@@ -673,7 +701,7 @@ export default function Report() {
                         <div style={{ height: 6, borderRadius: 3, background: 'var(--surface)', overflow: 'hidden' }}>
                           <div style={{
                             height: '100%', borderRadius: 3,
-                            width: report.semantic_analysis.method === 'distilbert' ? `${(report.semantic_analysis.semantic_prob ?? 0) * 100}%` : '0%',
+                            width: ['distilbert', 'roberta'].includes(report.semantic_analysis.method) ? `${(report.semantic_analysis.semantic_prob ?? 0) * 100}%` : '0%',
                             background: 'var(--purple)', transition: 'width 0.4s',
                           }} />
                         </div>

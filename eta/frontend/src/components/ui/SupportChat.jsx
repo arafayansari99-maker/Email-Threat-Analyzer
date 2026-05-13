@@ -21,30 +21,6 @@ const APP_GUIDE = [
 
 const WS_RECONNECT_DELAY = 3000
 
-function UploadBar({ imageInputRef, imagePreview, setImagePreview, onSelect }) {
-  return (
-    <div style={{ marginTop: '0.75rem', padding: '0.625rem 0.75rem', borderRadius: 10, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', gap: '0.625rem', background: 'var(--surface)' }}>
-      <input type="file" ref={imageInputRef} accept="image/*" style={{ display: 'none' }} onChange={onSelect} />
-      <button
-        onClick={() => imageInputRef.current?.click()}
-        style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', background: 'none', border: 'none', color: 'var(--sub)', cursor: 'pointer', fontSize: '0.75rem', padding: 0 }}
-      >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-        </svg>
-        Attach screenshot
-      </button>
-      {imagePreview && (
-        <>
-          <img src={imagePreview} alt="preview" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
-          <button onClick={() => setImagePreview(null)} style={{ background: 'none', border: 'none', color: 'var(--sub)', cursor: 'pointer', fontSize: '0.875rem', padding: 0, marginLeft: 'auto' }}>✕</button>
-        </>
-      )}
-    </div>
-  )
-}
-
 export default function SupportChat({ onClose }) {
   const { user } = useAuth()
   const [step, setStep] = useState('menu')

@@ -308,9 +308,41 @@ def analyze_keywords(text: str) -> dict:
             detected["critical"].append(phrase)
             detected["total"] += 1
 
-    # Check single keywords
+    import re
+
+    # Check single keywords (regex-based). Fallback to previous space-boundary
+    # method is kept for safety.
     for keyword in ALL_SUSPICIOUS_WORDS:
-        if f" {keyword} " in f" {text_lower} ":  # Word boundary check
+        found = False
+
+        # Multi-word phrases: allow flexible whitespace between words.
+        if " " in keyword:
+            words = [re.escape(w) for w in keyword.split() if w]
+            # Example: "action required" -> r"action\\s+required"
+            pat = r"\\b" + r"\\s+".join(words) + r"\\b"
+            try:
+                if re.search(pat, text_lower, flags=re.IGNORECASE):
+                    found = True
+            except re.error:
+                found = False
+
+        # Single word: match with word boundaries so punctuation (urgent.) is found.
+        else:
+            w = keyword.strip()
+            if w:
+                pat = r"\\b" + re.escape(w) + r"\\b"
+                try:
+                    if re.search(pat, text_lower, flags=re.IGNORECASE):
+                        found = True
+                except re.error:
+                    found = False
+
+        # Fallback to the original conservative check.
+        if not found:
+            if f" {keyword} " in f" {text_lower} ":
+                found = True
+
+        if found:
             severity = get_keyword_severity(keyword)
             category = find_keyword_category(keyword)
 

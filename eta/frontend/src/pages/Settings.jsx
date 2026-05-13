@@ -58,6 +58,7 @@ export default function Settings() {
   const [username, setUsername] = useState(user?.username || '')
   const [email, setEmail] = useState(user?.email || '')
   const [loading, setLoading] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [msg, setMsg] = useState('')
   const [stats, setStats] = useState(null)
 
@@ -356,8 +357,27 @@ export default function Settings() {
 
   return (
     <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
-      <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.25rem' }}>Settings</h1>
-      <p style={{ color: 'var(--sub)', fontSize: '0.9375rem', marginBottom: '1.5rem' }}>Manage your profile and preferences</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.25rem' }}>Settings</h1>
+          <p style={{ color: 'var(--sub)', fontSize: '0.9375rem' }}>Manage your profile and preferences</p>
+        </div>
+        <button
+          onClick={() => { setClearing(true); window.location.reload() }}
+          disabled={clearing}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.375rem',
+            padding: '0.5rem 1rem', borderRadius: 8,
+            border: '1px solid var(--border)', background: 'var(--surface)',
+            color: clearing ? 'var(--sub)' : 'var(--text)',
+            fontSize: '0.8125rem', fontWeight: 600, cursor: clearing ? 'not-allowed' : 'pointer',
+            transition: 'all 0.15s',
+          }}
+        >
+          <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: clearing ? 'rotate(360deg)' : 'none' }}>↻</span>
+          {clearing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: '1.75rem', overflowX: 'auto' }}>

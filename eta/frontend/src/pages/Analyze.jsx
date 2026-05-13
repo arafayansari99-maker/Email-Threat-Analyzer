@@ -493,8 +493,6 @@ function BatchAnalyzer() {
 
 function TextAnalyzer() {
   const [emailText, setEmailText] = useState('')
-  const [sender, setSender] = useState('')
-  const [subject, setSubject] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
@@ -515,7 +513,7 @@ function TextAnalyzer() {
     if (!emailText.trim()) { setError('Please paste email content to analyze'); return }
     setLoading(true); setError('')
     try {
-      const { data } = await api.post('/api/extension-scan', { email_content: emailText, sender, subject }, { timeout: 180000 })
+      const { data } = await api.post('/api/extension-scan', { email_content: emailText }, { timeout: 180000 })
       setResult(data)
     } catch (err) {
       setError(err.response?.data?.detail || 'Analysis failed')
@@ -526,19 +524,10 @@ function TextAnalyzer() {
 
   return (
     <form onSubmit={handleAnalyze}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-        <div>
-          <label htmlFor="text-sender" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sender (optional)</label>
-          <input id="text-sender" type="text" placeholder="sender@example.com" value={sender} onChange={e => setSender(e.target.value)} disabled={loading} style={inputStyle} />
-        </div>
-        <div>
-          <label htmlFor="text-subject" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Subject (optional)</label>
-          <input id="text-subject" type="text" placeholder="Email subject" value={subject} onChange={e => setSubject(e.target.value)} disabled={loading} style={inputStyle} />
-        </div>
-      </div>
-
       <div style={{ marginBottom: '1rem' }}>
-        <label htmlFor="text-body" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email Content *</label>
+        <label htmlFor="text-body" style={{ display: 'block', color: '#64748B', fontSize: '0.75rem', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Paste full email content (recommended: include From:/Subject: headers)
+        </label>
         <textarea
           id="text-body"
           placeholder="Paste email content here to analyze for malicious or suspicious content…"
@@ -566,6 +555,14 @@ function TextAnalyzer() {
 export default function Analyze() {
   const isMobile = useIsMobile()
   const [activeTab, setActiveTab] = useState('file')
+  const [clearing, setClearing] = useState(false)
+
+  const handleRefresh = () => {
+    setClearing(true)
+    // Reload the page to reset all analysis state
+    window.location.reload()
+    setTimeout(() => setClearing(false), 1000)
+  }
 
   const tabs = [
     { id: 'file',  label: 'Single File' },
@@ -575,9 +572,26 @@ export default function Analyze() {
 
   return (
     <div style={{ padding: isMobile ? '1rem' : '1.5rem' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Email Analyzer</h1>
-        <p style={{ color: '#64748B', fontSize: '0.9375rem' }}>Analyze emails for threats using file upload or text input</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.5rem' }}>Email Analyzer</h1>
+          <p style={{ color: '#64748B', fontSize: '0.9375rem' }}>Analyze emails for threats using file upload or text input</p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={clearing}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.375rem',
+            padding: '0.5rem 1rem', borderRadius: 8,
+            border: '1px solid var(--border)', background: 'var(--surface)',
+            color: clearing ? 'var(--sub)' : 'var(--text)',
+            fontSize: '0.8125rem', fontWeight: 600, cursor: clearing ? 'not-allowed' : 'pointer',
+            transition: 'all 0.15s',
+          }}
+        >
+          <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: clearing ? 'rotate(360deg)' : 'none' }}>↻</span>
+          {clearing ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
 
       <div

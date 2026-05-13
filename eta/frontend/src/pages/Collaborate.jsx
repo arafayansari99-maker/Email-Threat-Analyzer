@@ -155,6 +155,17 @@ export default function Collaborate() {
           <p style={{ color: '#64748B', fontSize: '0.9375rem' }}>Workspaces, comments & team activity</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={loadData} disabled={loading} style={{
+            display: 'flex', alignItems: 'center', gap: '0.375rem',
+            padding: '0.5rem 1rem', borderRadius: 8,
+            border: '1px solid var(--border)', background: 'var(--surface)',
+            color: loading ? 'var(--sub)' : 'var(--text)',
+            fontSize: '0.875rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+            transition: 'all 0.15s',
+          }}>
+            <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: loading ? 'rotate(360deg)' : 'none' }}>↻</span>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
           <button onClick={() => setShowCreate(true)} style={{
             padding: '0.625rem 1rem', borderRadius: 8, background: '#06B6D4', color: 'var(--text)',
             border: 'none', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
@@ -204,7 +215,7 @@ export default function Collaborate() {
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? '260px' : '300px'}, 1fr))`, gap: '1rem' }}>
-              {workspaces.map(ws => (
+              {workspaces.map((ws, idx) => (
                 <div key={ws.id} style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                     <div style={{ flex: 1 }}>

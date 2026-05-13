@@ -119,12 +119,25 @@ export default function Sessions() {
       <section style={{ background: 'var(--card)', border: '1px solid #1E2D40', borderRadius: '12px', padding: isMobile ? '1rem' : '1.5rem', marginBottom: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ color: 'var(--text)', fontSize: '1.1rem', fontWeight: 600 }}>Active Sessions</h2>
-          {sessions.length > 0 && (
-            <button onClick={handleRevokeAll}
-              style={{ padding: '0.4rem 0.8rem', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer', fontSize: '0.8rem' }}>
-              Revoke All
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button onClick={loadData} disabled={loading} style={{
+              display: 'flex', alignItems: 'center', gap: '0.375rem',
+              padding: '0.4rem 0.8rem', borderRadius: 6,
+              border: '1px solid var(--border)', background: 'var(--surface)',
+              color: loading ? 'var(--sub)' : 'var(--text)',
+              fontSize: '0.8rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}>
+              <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: loading ? 'rotate(360deg)' : 'none' }}>↻</span>
+              {loading ? 'Refreshing…' : 'Refresh'}
             </button>
-          )}
+            {sessions.length > 0 && (
+              <button onClick={handleRevokeAll}
+                style={{ padding: '0.4rem 0.8rem', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.3)', cursor: 'pointer', fontSize: '0.8rem' }}>
+                Revoke All
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? (

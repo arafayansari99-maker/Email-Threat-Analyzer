@@ -169,44 +169,29 @@ class ExtensionPayload(BaseModel):
 async def extension_scan(
     body: ExtensionPayload,
     db: Session = Depends(get_db),
+    current_user=Depends(optional_user),
 ):
-    """Analyze email content from browser extension - no auth required."""
-    """Analyze email content from browser extension."""
+    """Analyze email content from browser extension - auth optional."""
     if not body.email_content and not body.subject and not body.sender:
         raise HTTPException(400, "No content provided")
 
     # Build minimal RFC2822-like content for the engine
     raw = f"From: {body.sender}\nTo: {body.recipient}\nSubject: {body.subject}\n\n{body.email_content}"
-    # extension-scan has no authenticated user — tier2 defaults to False
-    result = run_analysis(raw.encode(), f"gmail_{(body.gmail_message_id or 'ext')[:8]}.txt", tier2_consent=False)
+    # If user is authenticated, save with their ID and honor tier2 consent; otherwise anonymous
+    uid = current_user.id if current_user else None
+    tier2 = _get_tier2_consent(db, uid)
+    result = run_analysis(raw.encode(), f"gmail_{(body.gmail_message_id or 'ext')[:8]}.txt", tier2_consent=tier2)
     if body.gmail_message_id:
         result["scan_id"] = body.gmail_message_id
 
     # Try to save, but don't fail if it doesn't work
     try:
-        _save(db, result, None, "extension")
+        _save(db, result, uid, "extension")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"Could not save scan: {e}")
 
-    return {
-        "scan_id":         result["scan_id"],
-        "risk_score":      result["risk_score"],
-        "verdict":         result["verdict"],
-        "color":           result["color"],
-        "phishing_prob":   round(result["risk_score"] / 100, 4),
-        "malicious_urls":  result["url_analysis"]["high_risk"][:5],
-        "url_count":       result["url_analysis"]["total"],
-        "mal_url_count":   result["url_analysis"]["malicious"],
-        "indicators":      result["header_analysis"]["indicators"][:5],
-        "recommendations": result["recommendations"][:3],
-        "auth": {
-            "spf":  result["header_analysis"]["spf"],
-            "dkim": result["header_analysis"]["dkim"],
-            "dmarc":result["header_analysis"]["dmarc"],
-        },
-        "duration": result["duration"],
-    }
+    return result
 
 
 def _save(db: Session, result: dict, user_id: Optional[int], source: str):

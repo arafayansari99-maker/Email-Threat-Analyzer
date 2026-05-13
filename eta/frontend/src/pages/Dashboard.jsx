@@ -164,7 +164,7 @@ export default function Dashboard() {
     <div style={{ marginBottom: '2rem' }}>
       <h2 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--sub)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Overview</h2>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
-        {statCards.map(card => (
+        {statCards.map((card, idx) => (
           <div key={card.label} style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem' }}>
             <p style={{ fontSize: '0.75rem', color: 'var(--sub)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>{card.label}</p>
             <p style={{ fontSize: '2rem', fontWeight: 'bold', color: card.color }}>{card.value}</p>
@@ -592,6 +592,21 @@ export default function Dashboard() {
           <p style={{ color: 'var(--sub)', fontSize: '0.9375rem' }}>Welcome back, <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{user?.username}</span></p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.375rem',
+              padding: '0.5rem 1rem', borderRadius: 8,
+              border: '1px solid var(--border)', background: 'var(--surface)',
+              color: loading ? 'var(--sub)' : 'var(--text)',
+              fontSize: '0.8125rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: loading ? 'rotate(360deg)' : 'none' }}>↻</span>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
           <Link to="/analyze" style={{ padding: '0.625rem 1.25rem', borderRadius: 8, background: 'var(--cyan)', color: '#fff', textDecoration: 'none', fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span>+</span> Quick Scan
           </Link>

@@ -160,8 +160,24 @@ export default function History() {
           <h1 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--text)', marginBottom: '0.25rem' }}>Scan History</h1>
           <p style={{ color: 'var(--sub)', fontSize: '0.875rem' }}>View and manage all your scanned emails</p>
         </div>
-        {/* Compare button */}
-        <button onClick={() => {
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => loadAll(false)}
+            disabled={loading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.375rem',
+              padding: '0.5rem 1rem', borderRadius: 8,
+              border: '1px solid var(--border)', background: 'var(--surface)',
+              color: loading ? 'var(--sub)' : 'var(--text)',
+              fontSize: '0.8125rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            <span style={{ display: 'inline-block', transition: 'transform 0.4s', transform: loading ? 'rotate(360deg)' : 'none' }}>↻</span>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+          {/* Compare button */}
+          <button onClick={() => {
             if (selectedForCompare.length === 2) {
               setCompareMode(true)
               runCompare()
@@ -170,6 +186,7 @@ export default function History() {
           style={{ padding: '0.5rem 1rem', borderRadius: 8, border: '1px solid var(--cyan)', background: compareMode ? 'var(--cyan)' : 'transparent', color: compareMode ? '#fff' : 'var(--cyan)', cursor: selectedForCompare.length === 2 ? 'pointer' : 'not-allowed', fontSize: '0.8125rem', fontWeight: 600, opacity: selectedForCompare.length === 2 ? 1 : 0.5 }}>
           {compareMode ? 'Comparing...' : `Compare (${selectedForCompare.length}/2)`}
         </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -263,7 +280,7 @@ export default function History() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.map(r => (
+                {filteredRecords.map((r, idx) => (
                   <tr key={r.scan_id} style={{ borderBottom: '1px solid var(--border)' }}>
                     {/* Compare checkbox */}
                     <td style={{ padding: '0.875rem', width: 40 }}>

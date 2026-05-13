@@ -410,12 +410,16 @@ function extractIOCs(report) {
     ...(ua.suspicious_urls || []),
     ...(ua.shortener_urls || []),
     ...(ua.all_urls || []),
-    // url_analysis.analyses is the primary URL store — urls[] is often empty
-    ...(ua.analyses || []).map(u => typeof u === 'object' ? u.url : u),
+    // url_analysis.urls is the per-URL result array (each entry has url + verdict fields)
     ...(ua.urls || []).map(u => typeof u === 'object' ? u.url : u),
   ])
   for (const url of [...allUrls].slice(0, 8)) {
     push('url', url, _urlIsThreat(url, ua) ? 'threat' : 'safe')
+  }
+
+  // Pull domain-type IOCs from report.iocs (backend already extracts these)
+  for (const ioc of (report.iocs || []).filter(i => i.type === 'domain')) {
+    push('domain', ioc.value, _domainRisk(ioc.value, auth))
   }
 
   for (const ip of (report.iocs || []).filter(i => i.type === 'ip').map(i => i.value)) {
@@ -424,6 +428,11 @@ function extractIOCs(report) {
 
   for (const ioc of (report.iocs || []).filter(i => i.type === 'hash')) {
     push('hash', ioc.value, _hashRisk(ioc.value, report.attachment_analysis?.attachments))
+  }
+
+  // Also pull url-type IOCs from report.iocs (backend deduplicates these)
+  for (const ioc of (report.iocs || []).filter(i => i.type === 'url')) {
+    push('url', ioc.value, _urlIsThreat(ioc.value, ua) ? 'threat' : 'safe')
   }
 
   return iocs
