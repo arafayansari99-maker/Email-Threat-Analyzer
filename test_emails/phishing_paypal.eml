@@ -1,0 +1,20 @@
+Return-Path: <support@paypal.com>
+Received: by smtp.paypal.com id 334455; Mon, 7 Apr 2026 14:00:00 -0400
+Date: Mon, 7 Apr 2026 14:00:00 -0400
+From: PayPal Security <security@paypal.com>
+To: user@example.com
+Subject: Your PayPal Account Has Been Limited - Please Verify
+Message-ID: <paypal999@paypal.com>
+Content-Type: text/html; charset=UTF-8
+
+<html>
+<body>
+<h1>PayPal Account Limitation Notice</h1>
+<p>Dear PayPal User,</p>
+<p>We have temporarily limited your account due to unusual activity.</p>
+<p>To restore full access, please verify your account information:</p>
+<p><a href="http://paypal-secure-login.com/verify?session=xyz789">Verify Account</a></p>
+<p>This verification is required to prevent fraud and protect your account.</p>
+<p>Thank you,<br>PayPal Security Team</p>
+</body>
+</html>

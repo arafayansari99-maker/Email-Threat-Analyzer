@@ -1,0 +1,12 @@
+{
+  "name": "eta-root",
+  "private": true,
+  "scripts": {
+    "frontend:dev": "cd eta/frontend && npm run dev",
+    "frontend:build": "cd eta/frontend && npm run build",
+    "build": "cd eta/frontend && npm install && npm run build",
+    "vercel-build": "npm run build",
+    "backend:dev": "cd eta/backend && python main.py",
+    "dev": "npm run frontend:dev"
+  }
+}

@@ -1,0 +1,30 @@
+Return-Path: <newsletter@github.com>
+Received: by smtp.github.com id 112233; Mon, 7 Apr 2026 13:00:00 -0400
+Authentication-Results: mx.example.com;
+   spf=pass (sender IP is 192.30.252.0) smtp.mailfrom=github.com;
+   dkim=pass header.d=github.com header.s=pf2014 header.b=xxxxxxxxxx;
+   dmarc=pass (p=REJECT) action=none header.from=github.com
+Received-SPF: pass (google.com: domain of noreply@github.com designates 192.30.252.0 as permitted sender)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=github.com; s=pf2014; bh=xxxxxxxxxx; b=xxxxxxxxxx
+Date: Mon, 7 Apr 2026 13:00:00 -0400
+From: GitHub Team <noreply@github.com>
+To: developer@example.com
+Subject: Your GitHub Security Alert Summary
+Message-ID: <github789@github.com>
+Content-Type: text/html; charset=UTF-8
+
+<html>
+<body>
+<h2>GitHub Security Alert Summary</h2>
+<p>Hello Developer,</p>
+<p>Here's your weekly security alert summary for your repositories:</p>
+<ul>
+<li>No new security vulnerabilities found</li>
+<li>All dependencies are up to date</li>
+<li>2FA is enabled on your account</li>
+</ul>
+<p>Keep your code secure!</p>
+<p>Best,<br>The GitHub Team</p>
+<p><small>You received this email because you have security alerts enabled for your repositories. <a href="https://github.com/settings/emails">Manage email preferences</a></small></p>
+</body>
+</html>

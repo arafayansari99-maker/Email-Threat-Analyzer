@@ -1,0 +1,2 @@
+eta/backend/ml/semantic_model/model.safetensors filter=lfs diff=lfs merge=lfs -text
+eta/backend/ml/semantic_model/model_quantized.pt filter=lfs diff=lfs merge=lfs -text

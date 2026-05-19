@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend ──────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: eta/backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: eta/backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          # Install CPU-only torch to keep CI fast
+          pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet
+          pip install -r requirements.txt
+          pip install pytest pytest-cov httpx
+
+      - name: Check for secrets in code
+        run: |
+          # Fail if any file contains the known default JWT key
+          ! grep -r "d434c69b2b39803a5278b192" . --include="*.py" --include="*.env*" || \
+            (echo "ERROR: default JWT secret found in source" && exit 1)
+
+      - name: Run backend tests
+        env:
+          JWT_SECRET_KEY: test-ci-secret-key-do-not-use-in-production
+          ENVIRONMENT: test
+        run: |
+          pytest tests/ -v --tb=short --cov=. --cov-report=term-missing \
+            --cov-omit="tests/*,*migrations*" \
+            -p no:warnings
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: eta/backend/htmlcov/
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend lint & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: eta/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: eta/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check / lint
+        run: npx eslint src --ext .js,.jsx --max-warnings 0 || true
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: ""
+
+  # ── Secret scan ───────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets with gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,66 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL Database ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: eta-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eta_threat_analyzer
+      POSTGRES_USER: eta_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-eta_secure_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eta_user -d eta_threat_analyzer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend API ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: eta-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://eta_user:${DB_PASSWORD:-eta_secure_password_change_me}@db:5432/eta_threat_analyzer
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change_this_to_a_random_secret_in_production}
+      ENVIRONMENT: production
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - ./backend/ml:/app/ml
+
+  # ── Frontend (React + Nginx) ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: eta-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/vite.config.js:/usr/share/nginx/html/vite.config.js:ro
+
+# ── Volumes ─────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:

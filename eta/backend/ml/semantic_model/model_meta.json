@@ -1,0 +1,46 @@
+{
+  "model_name": "roberta-base",
+  "method": "transformer_roberta",
+  "trained_at": "2026-05-02T19:09:18.974947Z",
+  "max_length": 256,
+  "quantized": true,
+  "thresholds": {
+    "phishing": 0.048,
+    "suspicious": 0.35
+  },
+  "training": {
+    "optimizer": "adamw_torch",
+    "learning_rate": 2e-05,
+    "lr_scheduler": "cosine",
+    "warmup_ratio": 0.1,
+    "label_smoothing": 0.1,
+    "epochs_trained": 5.0,
+    "train_samples": 4080,
+    "val_samples": 720,
+    "threat_styles": [
+      "credential_harvest",
+      "bec_wire_transfer",
+      "invoice_fraud",
+      "ceo_gift_card",
+      "crypto_scam",
+      "malware_lure",
+      "fake_delivery",
+      "tech_support",
+      "lottery_prize",
+      "spear_phishing"
+    ]
+  },
+  "metrics": {
+    "accuracy": 0.9917,
+    "f1": 0.9917,
+    "precision": 0.989,
+    "recall": 0.9944,
+    "roc_auc": 0.9997,
+    "val_loss": 0.21991339325904846
+  },
+  "quantization": {
+    "method": "dynamic_int8",
+    "layers": "torch.nn.Linear",
+    "dtype": "qint8"
+  }
+}

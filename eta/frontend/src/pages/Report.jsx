@@ -4,6 +4,13 @@ import api, { getHistory, getReport, downloadJSON, generatePDF, addFavourite, re
 import { useToast } from '../hooks/useToast'
 import { useIsMobile } from '../hooks/useIsMobile'
 
+const KNOWN_SAFE_DOMAINS = new Set([
+  'google.com','accounts.google.com','github.com','microsoft.com',
+  'live.com','outlook.com','apple.com','amazon.com','paypal.com',
+  'stripe.com','shopify.com','slack.com','zoom.us','dropbox.com',
+  'linkedin.com','twitter.com','x.com','facebook.com','instagram.com',
+])
+
 export default function Report() {
   const isMobile = useIsMobile()
   const { id } = useParams()
@@ -36,14 +43,15 @@ export default function Report() {
         setIsFav(true)
         success('Added to favourites')
       }
-    } catch { warn('Failed to update favourite') }
+    } catch {
+      warn('Failed to update favourite')
+    }
     setFavLoading(false)
   }, [selectedScan, isFav, success, warn])
 
-  // Keyboard: E to export
   useEffect(() => {
     const h = (e) => {
-      if (e.key.toLowerCase() === 'e' && !['INPUT','TEXTAREA'].includes(e.target.tagName)) {
+      if (e.key.toLowerCase() === 'e' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
         e.preventDefault()
         handleExportJSON()
       }
@@ -52,7 +60,6 @@ export default function Report() {
     return () => window.removeEventListener('keydown', h)
   }, [])
 
-  // Load scan list + optionally load report by ID from URL
   useEffect(() => {
     loadAll()
   }, [])
@@ -60,7 +67,6 @@ export default function Report() {
   const loadAll = async () => {
     setLoading(true)
     try {
-      // Load scans list, report, and favourites in parallel
       const [historyRes, reportRes, favRes] = await Promise.all([
         getHistory(1, 50),
         id ? getReport(id) : Promise.resolve({ data: null }),
@@ -70,28 +76,27 @@ export default function Report() {
       const records = historyRes.data?.records || historyRes.data?.data?.records || []
       setScans(records)
 
-      // Parse and set report — handle both JSON object and raw JSON string
       if (reportRes.data) {
         const raw = reportRes.data
-        let parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
         setReport(parsed)
 
-        // Find matching scan from history - handle both string and number
-        const matched = records.find(s => String(s.scan_id) === String(id) || s.scan_id === parseInt(id))
+        const matched = records.find(
+          (s) => String(s.scan_id) === String(id) || s.scan_id === parseInt(id)
+        )
         setSelectedScan(matched || null)
         if (matched) {
-          const favIds = (favRes.data?.favourites || []).map(f => f.scan_id)
+          const favIds = (favRes.data?.favourites || []).map((f) => f.scan_id)
           setIsFav(favIds.includes(String(matched.scan_id)))
         }
       }
     } catch (err) {
       console.error('Report load error:', err)
-      // Try loading just the history if report fails
       try {
         const { data: hData } = await getHistory(1, 50)
         const records = hData?.records || hData?.data?.records || []
         setScans(records)
-        const matched = records.find(s => s.scan_id === parseInt(id))
+        const matched = records.find((s) => s.scan_id === parseInt(id))
         setSelectedScan(matched || null)
       } catch (e2) {
         console.error(e2)
@@ -138,7 +143,7 @@ export default function Report() {
         content: newComment,
         is_flag: isFlag,
       })
-      setComments(prev => [data, ...prev])
+      setComments((prev) => [data, ...prev])
       setNewComment('')
       setIsFlag(false)
       success('Comment added')
@@ -226,88 +231,142 @@ export default function Report() {
   const getColor = (v) => ({ malicious: '#EF4444', suspicious: '#F59E0B', safe: '#10B981', unknown: '#64748B', trusted: '#10B981' }[v] || '#64748B')
 
   const getIOCStatus = (iocObj) => {
-    // Normalize verdict labels from backend so we render safe/suspicious/malicious consistently
+    const safeString = (v) => (v || '').toString().trim()
+    const normalize = (v) => safeString(v).toLowerCase()
     const normalizeVerdict = (v) => {
-      const vv = (v || '').toString().trim().toLowerCase()
-      if (!vv) return ''
-      if (vv === 'trusted' || vv === 'benign' || vv === 'safe' || vv === 'low') return 'safe'
-      if (vv === 'suspicious' || vv === 'medium' || vv === 'warning') return 'suspicious'
-      if (vv === 'malicious' || vv === 'high' || vv === 'danger') return 'malicious'
-      return vv
-    }
-    const safeString = (value) => (value || '').toString().trim()
-    const normalizeUrl = (url) => safeString(url).replace(/\/+$|\s+/g, '').toLowerCase()
-    const statusFromVerdict = (verdict, score) => {
-      const v = safeString(verdict).toLowerCase()
-      if (v === 'malicious' || v === 'high' || v === 'danger') return 'malicious'
-      if (v === 'suspicious' || v === 'medium' || v === 'warning') return 'suspicious'
-      if (v === 'safe' || v === 'benign' || v === 'low') return 'safe'
-      if (typeof score === 'number') {
-        if (score >= 70) return 'malicious'
-        if (score >= 40) return 'suspicious'
-        return 'safe'
-      }
+      const vv = normalize(v)
+      if (!vv) return 'unknown'
+      if (['trusted', 'benign', 'safe', 'low'].includes(vv)) return 'safe'
+      if (['suspicious', 'medium', 'warning'].includes(vv)) return 'suspicious'
+      if (['malicious', 'high', 'danger', 'threat'].includes(vv)) return 'malicious'
       return 'unknown'
     }
 
     if (!iocObj) return 'unknown'
     const value = safeString(iocObj.value || iocObj)
-    const type = safeString(iocObj.type).toLowerCase()
-    if (iocObj.risk) {
-      return normalizeVerdict(safeString(iocObj.risk))
-    }
-    // backend may provide verdict/label directly
-    if (iocObj.verdict) {
-      return normalizeVerdict(iocObj.verdict)
-    }
-    if (iocObj.status) {
-      return normalizeVerdict(iocObj.status)
-    }
+    const lowerValue = normalize(value)
+    const type = normalize(iocObj.type || 'ioc')
 
-    const urls = report?.url_analysis?.urls || []
+    if (iocObj.risk) return normalizeVerdict(iocObj.risk)
+    if (iocObj.verdict) return normalizeVerdict(iocObj.verdict)
+    if (iocObj.status) return normalizeVerdict(iocObj.status)
+
+    const ua = report?.url_analysis || {}
+    const auth = report?.authentication || {}
     const attachments = report?.attachment_analysis?.attachments || []
+    const maliciousUrlStrings = [
+      ...(ua.high_risk || []),
+      ...(ua.suspicious_urls || []),
+      ...(ua.shortener_urls || []),
+    ].map(normalize).filter(Boolean)
+    const allUrlStrings = [
+      ...(ua.all_urls || []),
+      ...(ua.urls || []).map((u) => (typeof u === 'object' ? u.url : u)),
+      ...(ua.analyses || []).map((u) => (typeof u === 'object' ? u.url : u)),
+    ].map(normalize).filter(Boolean)
+    const maliciousUrlSet = new Set(maliciousUrlStrings)
+    const allUrlSet = new Set(allUrlStrings)
+    const analyses = ua.analyses || ua.urls || []
+    const analysisMatch = analyses.find((u) => normalize(u?.url || u) === lowerValue)
 
     if (type === 'url') {
-      const match = urls.find((u) => normalizeUrl(u.url) === normalizeUrl(value) || normalizeUrl(u.url).endsWith(normalizeUrl(value)))
-      if (match) return statusFromVerdict(match.verdict, match.score)
+      if (maliciousUrlSet.has(lowerValue)) return 'malicious'
+      if (analysisMatch) {
+        const verdict = normalizeVerdict(analysisMatch.verdict || analysisMatch.risk || analysisMatch.status)
+        if (verdict !== 'unknown') return verdict
+      }
+      if (allUrlSet.has(lowerValue) || analysisMatch) return 'safe'
     }
 
     if (type === 'domain') {
-      const domain = value.toLowerCase()
+      const domain = lowerValue
+      const urls = ua.urls || []
       const matches = urls.filter((u) => {
         try {
-          const hostname = new URL(safeString(u.url)).hostname.toLowerCase()
+          const hostname = new URL((u?.url || u).toString()).hostname.toLowerCase()
           return hostname === domain || hostname.endsWith(`.${domain}`)
         } catch {
-          return safeString(u.url).toLowerCase().includes(domain)
+          return normalize(u?.url || u).includes(domain)
         }
       })
       if (matches.length > 0) {
-        const statuses = matches.map((u) => statusFromVerdict(u.verdict, u.score))
-        return statuses.includes('malicious') ? 'malicious' : statuses.includes('suspicious') ? 'suspicious' : 'safe'
+        const verdicts = matches.map((m) => normalizeVerdict(m.verdict || m.risk || m.status))
+        if (verdicts.includes('malicious')) return 'malicious'
+        if (verdicts.includes('suspicious')) return 'suspicious'
+        return 'safe'
       }
+      const spf = auth.spf_status || auth.spf
+      const dkim = auth.dkim_status || auth.dkim_present
+      const dmarc = auth.dmarc_status || auth.dmarc
+      const authed = [spf, dkim, dmarc].some((v) => v === true || v === 'pass')
+      if (authed || KNOWN_SAFE_DOMAINS.has(domain)) return 'safe'
+      return 'malicious'
     }
 
-    if (type === 'hash') {
-      const match = attachments.find((a) => safeString(a.sha256).toLowerCase() === value.toLowerCase() || safeString(a.md5).toLowerCase() === value.toLowerCase())
-      if (match) {
-        return statusFromVerdict(match.risk, match.score)
-      }
-      if (attachments.some((a) => a.is_malicious_extension || a.is_risky_extension)) {
-        return 'suspicious'
-      }
+    if (type === 'hash' || type === 'file') {
+      const match = attachments.find(
+        (a) =>
+          normalize(a.sha256) === lowerValue ||
+          normalize(a.md5) === lowerValue
+      )
+      if (match) return normalizeVerdict(match.risk || match.verdict || match.status)
+      if (attachments.some((a) => a.is_malicious_extension || a.is_risky_extension)) return 'suspicious'
     }
 
     if (type === 'ip') {
-      const ipReputation = report?.threat_intel?.ip_reputation || []
-      const match = Array.isArray(ipReputation)
-        ? ipReputation.find((entry) => safeString(entry.ip).toLowerCase() === value.toLowerCase())
-        : ipReputation
-      if (match) return statusFromVerdict(match.verdict || match.risk, match.score || match.risk_score)
+      const isIpAddress = (v) => /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)$/.test(v)
+      const ipRep = report?.threat_intel?.ip_reputation || []
+      const match = Array.isArray(ipRep)
+        ? ipRep.find((e) => normalize(e.ip) === lowerValue)
+        : ipRep
+      if (match) return normalizeVerdict(match.verdict || match.risk || match.status)
+      if (isIpAddress(lowerValue)) return 'safe'
     }
 
     return 'unknown'
   }
+
+  const getKeywordEntries = () => {
+    const critical = (report?.ml_analysis?.suspicious_keywords_found?.critical || report?.ml_analysis?.keywords_found?.critical || [])
+    const high = (report?.ml_analysis?.suspicious_keywords_found?.high || report?.ml_analysis?.keywords_found?.high || [])
+    const seen = new Set()
+    const entries = []
+    critical.forEach((w) => {
+      const s = String(w || '').trim()
+      if (!s) return
+      if (!seen.has(s)) {
+        seen.add(s)
+        entries.push({ word: s, severity: 'malicious' })
+      }
+    })
+    high.forEach((w) => {
+      const s = String(w || '').trim()
+      if (!s) return
+      if (!seen.has(s)) {
+        seen.add(s)
+        entries.push({ word: s, severity: 'suspicious' })
+      }
+    })
+    return entries
+  }
+
+  const headerDeepDive = report?.threat_intel?.header_deep_dive || null
+  const headerSummary = headerDeepDive?.summary || {}
+  const ipReputation = report?.threat_intel?.enrichment?.ip_reputation || {}
+  const shodanReputation = ipReputation.shodan || {}
+  const abuseIpReputation = ipReputation.abuseipdb || {}
+  const senderDomainReputation = report?.threat_intel?.enrichment?.sender_domain_reputation?.abuseipdb || null
+  const urlHosts = (report?.url_analysis?.urls || [])
+    .map((u) => {
+      const raw = typeof u?.url === 'string' ? u.url : u
+      try {
+        return { host: new URL(raw).hostname.toLowerCase(), url: raw, verdict: u?.verdict || 'unknown' }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+  const uniqueUrlHosts = Array.from(new Set(urlHosts.map((h) => h.host))).slice(0, 6)
 
   if (loading) {
     return (
@@ -514,6 +573,46 @@ export default function Report() {
                   </div>
                 )}
 
+              {headerDeepDive && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem', padding: '0.875rem 1rem', background: 'var(--surface)', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <h3 style={{ color: 'var(--text)', fontSize: '0.95rem', fontWeight: 600, margin: 0 }}>Sender Origin</h3>
+                    <span style={{ color: '#64748B', fontSize: '0.75rem' }}>IP + domain geolocation</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                    <div style={{ background: 'var(--card)', borderRadius: 8, padding: '1rem' }}>
+                      <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Email origin details</p>
+                      <div style={{ color: '#9CA3AF', fontSize: '0.8125rem', display: 'grid', gap: '0.4rem' }}>
+                        <div><span style={{ color: '#64748B' }}>From:</span> <span style={{ fontFamily: 'monospace' }}>{headerSummary.from || '—'}</span></div>
+                        <div><span style={{ color: '#64748B' }}>Return-Path:</span> <span style={{ fontFamily: 'monospace' }}>{headerSummary.return_path || '—'}</span></div>
+                        <div><span style={{ color: '#64748B' }}>Orig. IP:</span> <span style={{ fontFamily: 'monospace' }}>{headerSummary.originating_ip || '—'}</span></div>
+                        <div><span style={{ color: '#64748B' }}>Received hops:</span> <span>{headerSummary.received_count || 0}</span></div>
+                      </div>
+                    </div>
+                    <div style={{ background: 'var(--card)', borderRadius: 8, padding: '1rem' }}>
+                      <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Geolocation / ISP</p>
+                      <div style={{ color: '#9CA3AF', fontSize: '0.8125rem', display: 'grid', gap: '0.4rem' }}>
+                        <div><span style={{ color: '#64748B' }}>Country:</span> <span>{shodanReputation.country || abuseIpReputation.country_code || '—'}</span></div>
+                        <div><span style={{ color: '#64748B' }}>City:</span> <span>{shodanReputation.city || '—'}</span></div>
+                        <div><span style={{ color: '#64748B' }}>ISP:</span> <span>{shodanReputation.isp || abuseIpReputation.isp || '—'}</span></div>
+                        <div><span style={{ color: '#64748B' }}>Org:</span> <span>{shodanReputation.org || '—'}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                  {uniqueUrlHosts.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{ color: '#64748B', fontSize: '0.75rem' }}>Referenced URL hosts:</span>
+                      {uniqueUrlHosts.map((host) => (
+                        <span key={host} style={{ padding: '0.2rem 0.5rem', borderRadius: 9999, background: 'var(--muted)', color: '#4B5563', fontSize: '0.75rem' }}>{host}</span>
+                      ))}
+                    </div>
+                  )}
+                  <p style={{ color: '#64748B', fontSize: '0.75rem', margin: 0 }}>
+                    Compare multiple scans in History to see if the same sender or domain is observed from different source IP addresses over time.
+                  </p>
+                </div>
+              )}
+
                 {/* Stats Row */}
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? '90px' : '120px'}, 1fr))`, gap: '0.75rem', marginBottom: '1.25rem' }}>
                   <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem', textAlign: 'center' }}>
@@ -573,6 +672,25 @@ export default function Report() {
                             <td style={{ padding: '0.5rem 0', color: 'var(--text)', fontWeight: 500 }}>{value}</td>
                           </tr>
                         ))}
+                        {/* Keywords row: label left, all words as colored badges on the right */}
+                        {(() => {
+                          const kws = getKeywordEntries()
+                          if (!kws.length) return null
+                          return (
+                            <tr key="keywords" style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '0.5rem 0.75rem 0.5rem 0', color: '#64748B', whiteSpace: 'nowrap', width: '40%' }}>Keywords Detected</td>
+                              <td style={{ padding: '0.5rem 0' }}>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                  {kws.map((e, i) => (
+                                    <span key={`kw-${i}`} style={{ padding: '0.35rem 0.65rem', borderRadius: 999, background: e.severity === 'malicious' ? 'rgba(239,68,68,0.12)' : 'rgba(249,115,22,0.12)', color: e.severity === 'malicious' ? '#B91C1C' : '#B45309', fontSize: '0.75rem', fontWeight: 700, textTransform: 'capitalize' }}>
+                                      {e.word}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -756,17 +874,18 @@ export default function Report() {
                     {report.iocs.map((ioc, i) => {
                       const iocObj = typeof ioc === 'string' ? { value: ioc, type: 'ioc' } : ioc
                       const status = getIOCStatus(iocObj)
+                      const color = getColor(status)
                       return (
                         <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', minWidth: 84 }}>
-                            <span style={{ fontSize: '0.6875rem', color: '#06B6D4', fontWeight: 600, textTransform: 'uppercase' }}>
+                            <span style={{ fontSize: '0.6875rem', color: color, fontWeight: 600, textTransform: 'uppercase' }}>
                               {iocObj.type || 'ioc'}
                             </span>
-                            <span style={{ padding: '0.18rem 0.5rem', borderRadius: 9999, background: getColor(status) + '22', color: getColor(status), fontSize: '0.6875rem', fontWeight: 700, textTransform: 'capitalize', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 72 }}>
+                            <span style={{ padding: '0.18rem 0.5rem', borderRadius: 9999, background: color + '22', color: color, fontSize: '0.6875rem', fontWeight: 700, textTransform: 'capitalize', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 72 }}>
                               {status}
                             </span>
                           </div>
-                          <span style={{ color: '#9CA3AF', fontSize: '0.8125rem', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                          <span style={{ color: color, fontSize: '0.8125rem', fontFamily: 'monospace', wordBreak: 'break-all' }}>
                             {iocObj.value || ioc}
                           </span>
                         </div>
@@ -840,7 +959,7 @@ export default function Report() {
                         <h3 style={{ color: 'var(--text)', fontSize: '1rem', fontWeight: 600 }}>Sender Reputation</h3>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '1rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
                         {/* AbuseIPDB */}
                         {report.threat_intel.enrichment.ip_reputation.abuseipdb && report.threat_intel.enrichment.ip_reputation.abuseipdb.available && (
                           <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem' }}>
@@ -900,6 +1019,17 @@ export default function Report() {
                                   ))}
                                 </div>
                               )}
+                            </div>
+                          </div>
+                        )}
+                        {senderDomainReputation && senderDomainReputation.available && (
+                          <div style={{ background: 'var(--surface)', borderRadius: 8, padding: '1rem' }}>
+                            <p style={{ color: '#64748B', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Sender Domain</p>
+                            <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', display: 'grid', gap: '0.3rem' }}>
+                              <div><span style={{ color: '#64748B' }}>Domain:</span> <span style={{ fontFamily: 'monospace' }}>{report.meta.sender_domain || '—'}</span></div>
+                              <div><span style={{ color: '#64748B' }}>Abuse Score:</span> <span>{senderDomainReputation.abuse_score ?? '—'}</span></div>
+                              <div><span style={{ color: '#64748B' }}>Country:</span> <span>{senderDomainReputation.country_code || '—'}</span></div>
+                              <div><span style={{ color: '#64748B' }}>Usage:</span> <span>{senderDomainReputation.usage_type || '—'}</span></div>
                             </div>
                           </div>
                         )}

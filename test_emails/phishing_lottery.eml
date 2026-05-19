@@ -1,0 +1,20 @@
+Return-Path: <lottery@megamillions.com>
+Received: by smtp.lottery.com id 456789; Mon, 7 Apr 2026 12:00:00 -0400
+Date: Mon, 7 Apr 2026 12:00:00 -0400
+From: Mega Millions Lottery <winner@megamillions.com>
+To: luckywinner@example.com
+Subject: CONGRATULATIONS! You Won $1,000,000 - Claim Your Prize Now!
+Message-ID: <lottery456@megamillions.com>
+Content-Type: text/html; charset=UTF-8
+
+<html>
+<body>
+<h1>🎉 CONGRATULATIONS! 🎉</h1>
+<p>You have been selected as the winner of our $1,000,000 jackpot!</p>
+<p>Your ticket number: MM-2026-ABC-123</p>
+<p>To claim your prize, please provide your banking information:</p>
+<p><a href="http://megamillions-claim.com/verify?winner=abc123">Claim Your Million Dollar Prize</a></p>
+<p>Hurry! This offer expires in 48 hours.</p>
+<p>Best of luck,<br>Mega Millions Team</p>
+</body>
+</html>

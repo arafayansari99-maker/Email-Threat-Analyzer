@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 # Health check configuration
 HEALTH_CHECK_INTERVAL = int(os.environ.get("HEALTH_CHECK_INTERVAL", "60"))  # seconds
 HEALTH_CHECK_TIMEOUT = int(os.environ.get("HEALTH_CHECK_TIMEOUT", "10"))  # seconds
-HEALTH_CHECK_URL = os.environ.get("HEALTH_CHECK_URL", "http://127.0.0.1:8001/api/admin/health")
+# Default to the actual dev server port used by main.py (uvicorn runs on 8000).
+HEALTH_CHECK_URL = os.environ.get("HEALTH_CHECK_URL", "http://127.0.0.1:8000/api/admin/health")
 HEALTH_CHECK_RETRIES = int(os.environ.get("HEALTH_CHECK_RETRIES", "3"))
 HEALTH_CHECK_RETRY_DELAY = int(os.environ.get("HEALTH_CHECK_RETRY_DELAY", "5"))  # seconds
 

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, useAuth } from './hooks/useAuth'
+import { AuthProvider } from './hooks/useAuth'
+import { useAuth } from './hooks/useAuth'
 import { ThemeProvider } from './hooks/useTheme'
 import { ToastProvider } from './hooks/useToast'
 import Layout from './components/layout/Layout'

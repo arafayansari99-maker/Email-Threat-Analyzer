@@ -455,7 +455,7 @@ export default function Admin() {
             <div style={{ background: 'var(--card)', borderRadius: 12, border: '1px solid var(--border)', padding: '1.25rem', gridColumn: '1 / -1' }}>
               <h3 style={{ color: 'var(--text)', fontSize: '0.9375rem', fontWeight: 600, marginBottom: '1rem' }}>Scan Trends (Last 14 Days)</h3>
               {dashTrends.length > 0 ? (
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: 120 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: 140 }}>
                   {dashTrends.map((d, i) => {
                     const maxVal = Math.max(...dashTrends.map(t => t.total), 1)
                     const safe = Math.max(0, d.safe || 0)
@@ -471,7 +471,7 @@ export default function Admin() {
                           {suspH > 0 && <div style={{ width: '100%', height: suspH, background: 'var(--amber)', opacity: 0.85 }} />}
                           {malH > 0 && <div style={{ width: '100%', height: malH, background: 'var(--red)', borderRadius: malH > 0 && safeH === 0 && suspH === 0 ? '2px 2px 2px 2px' : '0 0 2px 2px' }} />}
                         </div>
-                        <span style={{ fontSize: '0.5625rem', color: 'var(--sub)', writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: 40 }}>{d.date.slice(5)}</span>
+                        <span style={{ fontSize: '0.5625rem', color: 'var(--sub)', textAlign: 'center', whiteSpace: 'nowrap', lineHeight: '1.2', height: 40 }}>{d.date.slice(5)}</span>
                       </div>
                     )
                   })}
@@ -479,7 +479,7 @@ export default function Admin() {
               ) : (
                 <p style={{ color: 'var(--sub)' }}>No scan data available</p>
               )}
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.75rem', fontSize: '0.6875rem' }}>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '0rem', fontSize: '0.6875rem' }}>
                 <span style={{ color: 'var(--green)' }}>● Safe</span>
                 <span style={{ color: 'var(--amber)' }}>● Suspicious</span>
                 <span style={{ color: 'var(--red)' }}>● Malicious</span>

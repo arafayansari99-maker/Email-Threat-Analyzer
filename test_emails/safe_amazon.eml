@@ -1,0 +1,21 @@
+Return-Path: <support@amazon.com>
+Received: by smtp.amazon.com id 789012; Mon, 7 Apr 2026 11:00:00 -0400
+Date: Mon, 7 Apr 2026 11:00:00 -0400
+From: Amazon Order Update <order-update@amazon.com>
+To: customer@example.com
+Subject: Your Package Delivery - Tracking Information
+Message-ID: <amazon123@amazon.com>
+Content-Type: text/html; charset=UTF-8
+
+<html>
+<body>
+<h2>Package Delivery Update</h2>
+<p>Hello,</p>
+<p>Your recent order has been shipped and is on its way to you.</p>
+<p>Tracking Number: 1Z999AA1234567890</p>
+<p>You can track your package here: <a href="https://www.amazon.com/gp/your-account/order-details">View Order Details</a></p>
+<p>Expected delivery: Tomorrow between 2-6 PM</p>
+<p>Thank you for shopping with Amazon!</p>
+<p>Best,<br>Amazon Customer Service</p>
+</body>
+</html>

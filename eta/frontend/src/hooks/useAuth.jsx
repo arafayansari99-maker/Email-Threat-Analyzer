@@ -1,9 +1,17 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import axios from 'axios'
 import api, { setToken } from '../services/api'
 import { getProfile } from '../services/api'
 
-const AuthContext = createContext(null)
+const AuthContext = createContext({
+  user: null,
+  loading: true,
+  login: () => Promise.reject(new Error('AuthProvider not initialized')),
+  register: () => Promise.reject(new Error('AuthProvider not initialized')),
+  logout: () => Promise.reject(new Error('AuthProvider not initialized')),
+  refreshUser: () => Promise.reject(new Error('AuthProvider not initialized')),
+  syncUser: () => {}
+})
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(() => {
@@ -94,8 +102,19 @@ export function AuthProvider({ children }) {
     setUser(userData)
   }, [])
 
+  // Memoize the context value to prevent unnecessary re-renders and HMR issues
+  const value = useMemo(() => ({
+    user,
+    loading,
+    login,
+    register,
+    logout,
+    refreshUser,
+    syncUser
+  }), [user, loading, login, register, logout, refreshUser, syncUser])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, syncUser }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
