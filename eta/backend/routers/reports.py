@@ -187,6 +187,9 @@ def download_json(scan_id: str, db: Session = Depends(get_db), current_user: Use
         },
     }
 
+    # Include the full raw report payload so downloads preserve all extracted analysis data.
+    export["raw_report"] = d
+
     # Remove keys with None values at top level for cleaner output
     export = {k: v for k, v in export.items() if v is not None}
 
@@ -245,6 +248,12 @@ def generate_pdf(scan_id: str, db: Session = Depends(get_db), current_user: User
         url_a    = data.get("url_analysis", {})
         attach_a = data.get("attachment_analysis", {})
         ml_a     = data.get("ml_analysis", {})
+        ti       = data.get("threat_intel", {})
+        header_deep_dive = ti.get("header_deep_dive", {})
+        header_deep_summary = header_deep_dive.get("summary", {})
+        enrich   = ti.get("enrichment", {})
+        ip_rep   = enrich.get("ip_reputation", {})
+        sender_domain_rep = enrich.get("sender_domain_reputation", {})
         iocs     = data.get("iocs", [])
         recs     = data.get("recommendations", [])
         breakdown= data.get("breakdown", {})
@@ -434,6 +443,64 @@ def generate_pdf(scan_id: str, db: Session = Depends(get_db), current_user: User
         ]))
         story.append(a_tbl)
         story.append(Spacer(1, 0.4*cm))
+
+        # ── HEADER DEEP-DIVE SUMMARY ──────────────────────────────────────────
+        if header_deep_summary:
+            story.append(section("Header Deep-Dive Summary"))
+            hd_rows = [[th("Field"), th("Value")]]
+            for label, key in [
+                ("Originating IP", "originating_ip"),
+                ("From", "from"),
+                ("Reply-To", "reply_to"),
+                ("Return-Path", "return_path"),
+                ("Subject", "subject"),
+                ("Date", "date"),
+                ("Received Hops", "received_count"),
+            ]:
+                val = header_deep_summary.get(key, "N/A")
+                hd_rows.append([td(label), tdg(str(val) if val is not None else "N/A")])
+            hd_tbl = Table(hd_rows, colWidths=[4*cm, W-4*cm])
+            hd_tbl.setStyle(TableStyle([
+                ("BACKGROUND",    (0,0), (-1,0),  PRIMARY),
+                ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, LIGHT_GRAY]),
+                ("GRID",          (0,0), (-1,-1), 0.3, MID_GRAY),
+                ("PADDING",       (0,0), (-1,-1), 7),
+                ("VALIGN",        (0,0), (-1,-1), "TOP"),
+            ]))
+            story.append(hd_tbl)
+            story.append(Spacer(1, 0.4*cm))
+
+        # ── THREAT INTELLIGENCE / SENDER REPUTATION ──────────────────────────
+        if ip_rep or sender_domain_rep:
+            story.append(section("Threat Intelligence & Sender Reputation"))
+            ti_rows = [[th("Source"), th("Property"), th("Value")]]
+            if ip_rep:
+                for label, key in [
+                    ("IP Reputation", "abuse_score"),
+                    ("IP Reputation", "total_reports"),
+                    ("IP Reputation", "country_code"),
+                    ("IP Reputation", "isp"),
+                    ("IP Reputation", "domain"),
+                    ("IP Reputation", "usage_type"),
+                ]:
+                    ti_rows.append([td("AbuseIPDB"), td(label), tdg(ip_rep.get(key, "N/A"))])
+            if sender_domain_rep:
+                for label, key in [
+                    ("Domain Reputation", "abuse_score"),
+                    ("Domain Reputation", "country_code"),
+                    ("Domain Reputation", "usage_type"),
+                ]:
+                    ti_rows.append([td("Sender Domain"), td(label), tdg(sender_domain_rep.get(key, "N/A"))])
+            ti_tbl = Table(ti_rows, colWidths=[3*cm, 4*cm, W-7*cm])
+            ti_tbl.setStyle(TableStyle([
+                ("BACKGROUND",    (0,0), (-1,0),  PRIMARY),
+                ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, LIGHT_GRAY]),
+                ("GRID",          (0,0), (-1,-1), 0.3, MID_GRAY),
+                ("PADDING",       (0,0), (-1,-1), 7),
+                ("VALIGN",        (0,0), (-1,-1), "TOP"),
+            ]))
+            story.append(ti_tbl)
+            story.append(Spacer(1, 0.4*cm))
 
         # ── ML ANALYSIS ──────────────────────────────────────────────────────
         story.append(section("ML / AI Analysis"))
