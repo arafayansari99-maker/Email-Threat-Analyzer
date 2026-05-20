@@ -1,15 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "npm run vercel-build",
   "outputDirectory": "eta/frontend/dist",
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "eta/frontend/dist"
-      }
-    }
-  ],
   "rewrites": [
     {
       "source": "/(.*)",
